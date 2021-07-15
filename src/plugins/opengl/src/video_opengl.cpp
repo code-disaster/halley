@@ -320,6 +320,8 @@ void VideoOpenGL::finishRender()
 	HALLEY_DEBUG_TRACE();
 
 	glCheckError();
+
+	window->present();
 }
 
 void VideoOpenGL::flip()

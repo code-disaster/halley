@@ -118,6 +118,16 @@ void SDLWindow::swap()
 	SDL_GL_SwapWindow(window);
 }
 
+void SDLWindow::present()
+{
+	// Throttle CPU & GPU usage if window is minimized or out of focus.
+	// - At least on Windows, rendering doesn't wait on v-sync if the window is minimized.
+	// - TODO: the delay should be configurable, and only done for *one* window
+	if (curDefinition->getWindowState() == WindowState::Minimized || !curDefinition->isInFocus()) {
+		SDL_Delay(15);
+	}
+}
+
 int SDLWindow::getId() const
 {
 	return SDL_GetWindowID(window);

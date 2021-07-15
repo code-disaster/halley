@@ -62,6 +62,7 @@ namespace Halley
 		String getTitle() const { return title; }
 		std::optional<Path> getIcon() const { return icon; }
 		bool isShowOnCreation() const { return showOnCreation; }
+		bool isInFocus() const { return hasFocus; }
 
 		WindowDefinition withPosition(std::optional<Vector2i> newPos) const
 		{
@@ -91,6 +92,13 @@ namespace Halley
 			return w;
 		}
 
+		WindowDefinition withFocus(bool hasFocus) const
+		{
+			auto w = *this;
+			w.hasFocus = hasFocus;
+			return w;
+		}
+
 	private:
 		WindowType windowType = WindowType::Fullscreen;
 		WindowState windowState = WindowState::Normal;
@@ -99,6 +107,7 @@ namespace Halley
 		String title;
 		std::optional<Path> icon;
 		bool showOnCreation = true;
+		bool hasFocus = true;
 	};
 
 	class Window
@@ -111,6 +120,7 @@ namespace Halley
 		virtual void hide() = 0;
 		virtual void setVsync(bool vsync) = 0;
 		virtual void swap() = 0;
+		virtual void present() = 0;
 		virtual Rect4i getWindowRect() const = 0;
 		virtual const WindowDefinition& getDefinition() const = 0;
 

@@ -16,6 +16,7 @@ namespace Halley
 		void hide() override;
 		void setVsync(bool vsync) override;
 		void swap() override;
+		void present() override;
 		Rect4i getWindowRect() const override;
 
 		int getId() const;

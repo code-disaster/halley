@@ -112,6 +112,7 @@ void DX11Video::startRender()
 void DX11Video::finishRender()
 {
 	swapChain->present(useVsync);
+	window->present();
 }
 
 void DX11Video::setWindow(WindowDefinition&& windowDescriptor)

@@ -101,6 +101,8 @@ void DummyWindow::setVsync(bool vsync) {}
 
 void DummyWindow::swap() {}
 
+void DummyWindow::present() {}
+
 Rect4i DummyWindow::getWindowRect() const
 {
 	return Rect4i({}, definition.getSize());
