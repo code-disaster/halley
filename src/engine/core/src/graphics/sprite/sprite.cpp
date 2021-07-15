@@ -153,7 +153,7 @@ Rect4f Sprite::getAABB() const
 
 	//Expects(!std::isnan(sz.x));
 	//Expects(!std::isnan(sz.y));
-	
+
 	if (std::abs(getRotation().toRadians()) < 0.0001f) {
 		// No rotation, give exact bounding box
 		const Vector2f pivot = getPivot();
@@ -162,7 +162,7 @@ Rect4f Sprite::getAABB() const
 		return Rect4f(offsetPos, offsetPos + sz);
 	} else {
 		// This is a coarse test; will give a few false positives
-		const Vector2f sz2 = sz * std::sqrt(2);
+		const Vector2f sz2 = sz * 1.41421356f; // sqrt(2)
 		return getPosition() + Rect4f(-sz2, sz2); // Could use offset here, but that would also need to take rotation into account
 	}
 }
@@ -176,7 +176,7 @@ Rect4f Sprite::getUncroppedAABB() const
 		return getPosition() - pivot + Rect4f(Vector2f(), sz);
 	} else {
 		// This is a coarse test; will give a few false positives
-		const Vector2f sz2 = sz * std::sqrt(2);
+		const Vector2f sz2 = sz * 1.41421356f; // sqrt(2)
 		return getPosition() + Rect4f(-sz2, sz2); // Could use offset here, but that would also need to take rotation into account
 	}
 }
