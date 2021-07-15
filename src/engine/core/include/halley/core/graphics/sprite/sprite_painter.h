@@ -27,9 +27,9 @@ namespace Halley
 	public:
 		using Callback = std::function<void(Painter&)>;
 		
-		SpritePainterEntry(gsl::span<const Sprite> sprites, int mask, int layer, float tieBreaker, size_t insertOrder, std::optional<Rect4f> clip);
-		SpritePainterEntry(gsl::span<const TextRenderer> texts, int mask, int layer, float tieBreaker, size_t insertOrder, std::optional<Rect4f> clip);
-		SpritePainterEntry(SpritePainterEntryType type, size_t spriteIdx, size_t count, int mask, int layer, float tieBreaker, size_t insertOrder, std::optional<Rect4f> clip);
+		SpritePainterEntry(gsl::span<const Sprite> sprites, int layer, float tieBreaker, size_t insertOrder, std::optional<Rect4f> clip);
+		SpritePainterEntry(gsl::span<const TextRenderer> texts, int layer, float tieBreaker, size_t insertOrder, std::optional<Rect4f> clip);
+		SpritePainterEntry(SpritePainterEntryType type, size_t spriteIdx, size_t count, int layer, float tieBreaker, size_t insertOrder, std::optional<Rect4f> clip);
 
 		bool operator<(const SpritePainterEntry& o) const;
 		SpritePainterEntryType getType() const;
@@ -37,7 +37,6 @@ namespace Halley
 		gsl::span<const TextRenderer> getTexts() const;
 		uint32_t getIndex() const;
 		uint32_t getCount() const;
-		int getMask() const;
 		const std::optional<Rect4f>& getClip() const;
 
 	private:
@@ -46,7 +45,6 @@ namespace Halley
 		uint32_t index = std::numeric_limits<uint32_t>::max();
 		SpritePainterEntryType type;
 		int layer;
-		int mask;
 		float tieBreaker;
 		size_t insertOrder;
 		std::optional<Rect4f> clip;
@@ -57,13 +55,13 @@ namespace Halley
 	public:
 		void start();
 
-		void add(const Sprite& sprite, int layer, float tieBreaker, std::optional<Rect4f> clip = {});
-		void addCopy(const Sprite& sprite, int layer, float tieBreaker, std::optional<Rect4f> clip = {});
-		void add(gsl::span<const Sprite> sprites, int layer, float tieBreaker, std::optional<Rect4f> clip = {});
-		void addCopy(gsl::span<const Sprite> sprites, int layer, float tieBreaker, std::optional<Rect4f> clip = {});
-		void add(const TextRenderer& sprite, int layer, float tieBreaker, std::optional<Rect4f> clip = {});
-		void addCopy(const TextRenderer& text, int layer, float tieBreaker, std::optional<Rect4f> clip = {});
-		void add(SpritePainterEntry::Callback callback, int layer, float tieBreaker, std::optional<Rect4f> clip = {});
+		void add(const Sprite& sprite, int layer, float tieBreaker, std::optional<Rect4f>& clip);
+		void addCopy(const Sprite& sprite, int layer, float tieBreaker, std::optional<Rect4f>& clip);
+		void add(gsl::span<const Sprite> sprites, int layer, float tieBreaker, std::optional<Rect4f>& clip);
+		void addCopy(gsl::span<const Sprite> sprites, int layer, float tieBreaker, std::optional<Rect4f>& clip);
+		void add(const TextRenderer& sprite, int layer, float tieBreaker, std::optional<Rect4f>& clip);
+		void addCopy(const TextRenderer& text, int layer, float tieBreaker, std::optional<Rect4f>& clip);
+		void add(SpritePainterEntry::Callback callback, int layer, float tieBreaker, std::optional<Rect4f>& clip);
 
 		void draw(Painter& painter);
 

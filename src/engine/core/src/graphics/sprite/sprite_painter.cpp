@@ -1,40 +1,36 @@
 #include "graphics/sprite/sprite_painter.h"
 #include "graphics/sprite/sprite.h"
 #include "graphics/painter.h"
-#include <gsl/gsl>
 #include "graphics/text/text_renderer.h"
 
 using namespace Halley;
 
-SpritePainterEntry::SpritePainterEntry(gsl::span<const Sprite> sprites, int mask, int layer, float tieBreaker, size_t insertOrder, std::optional<Rect4f> clip)
+SpritePainterEntry::SpritePainterEntry(gsl::span<const Sprite> sprites, int layer, float tieBreaker, size_t insertOrder, std::optional<Rect4f> clip)
 	: ptr(sprites.empty() ? nullptr : &sprites[0])
 	, count(uint32_t(sprites.size()))
 	, type(SpritePainterEntryType::SpriteRef)
 	, layer(layer)
-	, mask(mask)
 	, tieBreaker(tieBreaker)
 	, insertOrder(insertOrder)
 	, clip(clip)
 {}
 
-SpritePainterEntry::SpritePainterEntry(gsl::span<const TextRenderer> texts, int mask, int layer, float tieBreaker, size_t insertOrder, std::optional<Rect4f> clip)
+SpritePainterEntry::SpritePainterEntry(gsl::span<const TextRenderer> texts, int layer, float tieBreaker, size_t insertOrder, std::optional<Rect4f> clip)
 	: ptr(texts.empty() ? nullptr : &texts[0])
 	, count(uint32_t(texts.size()))
 	, type(SpritePainterEntryType::TextRef)
 	, layer(layer)
-	, mask(mask)
 	, tieBreaker(tieBreaker)
 	, insertOrder(insertOrder)
 	, clip(clip)
 {
 }
 
-SpritePainterEntry::SpritePainterEntry(SpritePainterEntryType type, size_t spriteIdx, size_t count, int mask, int layer, float tieBreaker, size_t insertOrder, std::optional<Rect4f> clip)
+SpritePainterEntry::SpritePainterEntry(SpritePainterEntryType type, size_t spriteIdx, size_t count, int layer, float tieBreaker, size_t insertOrder, std::optional<Rect4f> clip)
 	: count(uint32_t(count))
 	, index(static_cast<int>(spriteIdx))
 	, type(type)
 	, layer(layer)
-	, mask(mask)
 	, tieBreaker(tieBreaker)
 	, insertOrder(insertOrder)
 	, clip(clip)
@@ -81,11 +77,6 @@ uint32_t SpritePainterEntry::getCount() const
 	return count;
 }
 
-int SpritePainterEntry::getMask() const
-{
-	return mask;
-}
-
 const std::optional<Rect4f>& SpritePainterEntry::getClip() const
 {
 	return clip;
@@ -98,52 +89,52 @@ void SpritePainterBucket::start()
 	cachedText.clear();
 }
 
-void SpritePainterBucket::add(const Sprite& sprite, int layer, float tieBreaker, std::optional<Rect4f> clip)
+void SpritePainterBucket::add(const Sprite& sprite, int layer, float tieBreaker, std::optional<Rect4f>& clip)
 {
-	sprites.push_back(SpritePainterEntry(gsl::span<const Sprite>(&sprite, 1), 0, layer, tieBreaker, sprites.size(), std::move(clip)));
+	sprites.push_back(SpritePainterEntry(gsl::span<const Sprite>(&sprite, 1), layer, tieBreaker, sprites.size(), std::move(clip)));
 	dirty = true;
 }
 
-void SpritePainterBucket::addCopy(const Sprite& sprite, int layer, float tieBreaker, std::optional<Rect4f> clip)
+void SpritePainterBucket::addCopy(const Sprite& sprite, int layer, float tieBreaker, std::optional<Rect4f>& clip)
 {
-	sprites.push_back(SpritePainterEntry(SpritePainterEntryType::SpriteCached, cachedSprites.size(), 1, 0, layer, tieBreaker, sprites.size(), std::move(clip)));
+	sprites.push_back(SpritePainterEntry(SpritePainterEntryType::SpriteCached, cachedSprites.size(), 1, layer, tieBreaker, sprites.size(), std::move(clip)));
 	cachedSprites.push_back(sprite);
 	dirty = true;
 }
 
-void SpritePainterBucket::add(gsl::span<const Sprite> sprites, int layer, float tieBreaker, std::optional<Rect4f> clip)
+void SpritePainterBucket::add(gsl::span<const Sprite> sprites, int layer, float tieBreaker, std::optional<Rect4f>& clip)
 {
 	if (!sprites.empty()) {
-		this->sprites.push_back(SpritePainterEntry(sprites, 0, layer, tieBreaker, this->sprites.size(), std::move(clip)));
+		this->sprites.push_back(SpritePainterEntry(sprites, layer, tieBreaker, this->sprites.size(), std::move(clip)));
 		dirty = true;
 	}
 }
 
-void SpritePainterBucket::addCopy(gsl::span<const Sprite> sprites, int layer, float tieBreaker, std::optional<Rect4f> clip)
+void SpritePainterBucket::addCopy(gsl::span<const Sprite> sprites, int layer, float tieBreaker, std::optional<Rect4f>& clip)
 {
 	if (!sprites.empty()) {
-		this->sprites.push_back(SpritePainterEntry(SpritePainterEntryType::SpriteCached, cachedSprites.size(), sprites.size(), 0, layer, tieBreaker, this->sprites.size(), std::move(clip)));
+		this->sprites.push_back(SpritePainterEntry(SpritePainterEntryType::SpriteCached, cachedSprites.size(), sprites.size(), layer, tieBreaker, this->sprites.size(), std::move(clip)));
 		cachedSprites.insert(cachedSprites.end(), sprites.begin(), sprites.end());
 		dirty = true;
 	}
 }
 
-void SpritePainterBucket::add(const TextRenderer& text, int layer, float tieBreaker, std::optional<Rect4f> clip)
+void SpritePainterBucket::add(const TextRenderer& text, int layer, float tieBreaker, std::optional<Rect4f>& clip)
 {
-	sprites.push_back(SpritePainterEntry(gsl::span<const TextRenderer>(&text, 1), 0, layer, tieBreaker, sprites.size(), std::move(clip)));
+	sprites.push_back(SpritePainterEntry(gsl::span<const TextRenderer>(&text, 1), layer, tieBreaker, sprites.size(), std::move(clip)));
 	dirty = true;
 }
 
-void SpritePainterBucket::addCopy(const TextRenderer& text, int layer, float tieBreaker, std::optional<Rect4f> clip)
+void SpritePainterBucket::addCopy(const TextRenderer& text, int layer, float tieBreaker, std::optional<Rect4f>& clip)
 {
-	sprites.push_back(SpritePainterEntry(SpritePainterEntryType::TextCached, cachedText.size(), 1, 0, layer, tieBreaker, sprites.size(), std::move(clip)));
+	sprites.push_back(SpritePainterEntry(SpritePainterEntryType::TextCached, cachedText.size(), 1, layer, tieBreaker, sprites.size(), std::move(clip)));
 	cachedText.push_back(text);
 	dirty = true;
 }
 
-void SpritePainterBucket::add(SpritePainterEntry::Callback callback, int layer, float tieBreaker, std::optional<Rect4f> clip)
+void SpritePainterBucket::add(SpritePainterEntry::Callback callback, int layer, float tieBreaker, std::optional<Rect4f>& clip)
 {
-	sprites.push_back(SpritePainterEntry(SpritePainterEntryType::Callback, callbacks.size(), 1, 0, layer, tieBreaker, sprites.size(), std::move(clip)));
+	sprites.push_back(SpritePainterEntry(SpritePainterEntryType::Callback, callbacks.size(), 1, layer, tieBreaker, sprites.size(), std::move(clip)));
 	callbacks.push_back(std::move(callback));
 	dirty = true;
 }
