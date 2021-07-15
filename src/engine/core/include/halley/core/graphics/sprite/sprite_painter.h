@@ -52,6 +52,33 @@ namespace Halley
 		std::optional<Rect4f> clip;
 	};
 
+	class SpritePainterBucket
+	{
+	public:
+		void start();
+
+		void add(const Sprite& sprite, int layer, float tieBreaker, std::optional<Rect4f> clip = {});
+		void addCopy(const Sprite& sprite, int layer, float tieBreaker, std::optional<Rect4f> clip = {});
+		void add(gsl::span<const Sprite> sprites, int layer, float tieBreaker, std::optional<Rect4f> clip = {});
+		void addCopy(gsl::span<const Sprite> sprites, int layer, float tieBreaker, std::optional<Rect4f> clip = {});
+		void add(const TextRenderer& sprite, int layer, float tieBreaker, std::optional<Rect4f> clip = {});
+		void addCopy(const TextRenderer& text, int layer, float tieBreaker, std::optional<Rect4f> clip = {});
+		void add(SpritePainterEntry::Callback callback, int layer, float tieBreaker, std::optional<Rect4f> clip = {});
+
+		void draw(Painter& painter);
+
+	private:
+		Vector<SpritePainterEntry> sprites;
+		Vector<Sprite> cachedSprites;
+		Vector<TextRenderer> cachedText;
+		Vector<SpritePainterEntry::Callback> callbacks;
+		bool dirty = false;
+
+		static void draw(gsl::span<const Sprite> sprite, Painter& painter, const Rect4f& view, const std::optional<Rect4f>& clip);
+		static void draw(gsl::span<const TextRenderer> text, Painter& painter, const Rect4f& view, const std::optional<Rect4f>& clip);
+		static void draw(const SpritePainterEntry::Callback& callback, Painter& painter, const std::optional<Rect4f>& clip);
+	};
+
 	class SpritePainter
 	{
 	public:
@@ -69,14 +96,6 @@ namespace Halley
 		void draw(int mask, Painter& painter);
 
 	private:
-		Vector<SpritePainterEntry> sprites;
-		Vector<Sprite> cachedSprites;
-		Vector<TextRenderer> cachedText;
-		Vector<SpritePainterEntry::Callback> callbacks;
-		bool dirty = false;
-
-		void draw(gsl::span<const Sprite> sprite, Painter& painter, Rect4f view, const std::optional<Rect4f>& clip) const;
-		void draw(gsl::span<const TextRenderer> text, Painter& painter, Rect4f view, const std::optional<Rect4f>& clip) const;
-		void draw(const SpritePainterEntry::Callback& callback, Painter& painter, const std::optional<Rect4f>& clip) const;
+		Vector<SpritePainterBucket> buckets;
 	};
 }
