@@ -37,17 +37,22 @@ namespace Halley
 		gsl::span<const TextRenderer> getTexts() const;
 		uint32_t getIndex() const;
 		uint32_t getCount() const;
-		const std::optional<Rect4f>& getClip() const;
+		std::optional<Rect4f> getClip() const;
 
+		static uint32_t packData(SpritePainterEntryType type, int layer, size_t insertOrder, bool clip);
+	
 	private:
 		const void* ptr = nullptr;
+		Rect4f clip;
 		uint32_t count = 0;
 		uint32_t index = std::numeric_limits<uint32_t>::max();
-		SpritePainterEntryType type;
-		int layer;
+		// bits		desc
+		// 31::29	type
+		//   28		if set, clip is valid/used
+		// 27::20	layer
+		// 19::00	insertOrder
+		uint32_t packedData;
 		float tieBreaker;
-		size_t insertOrder;
-		std::optional<Rect4f> clip;
 	};
 
 	class SpritePainterBucket

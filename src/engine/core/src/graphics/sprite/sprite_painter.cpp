@@ -8,61 +8,65 @@ using namespace Halley;
 SpritePainterEntry::SpritePainterEntry(gsl::span<const Sprite> sprites, int layer, float tieBreaker, size_t insertOrder, std::optional<Rect4f> clip)
 	: ptr(sprites.empty() ? nullptr : &sprites[0])
 	, count(uint32_t(sprites.size()))
-	, type(SpritePainterEntryType::SpriteRef)
-	, layer(layer)
 	, tieBreaker(tieBreaker)
-	, insertOrder(insertOrder)
-	, clip(clip)
-{}
+{
+	this->clip = clip.value_or(Rect4f {});
+	packedData = packData(SpritePainterEntryType::SpriteRef, layer, insertOrder, clip.has_value());
+}
 
 SpritePainterEntry::SpritePainterEntry(gsl::span<const TextRenderer> texts, int layer, float tieBreaker, size_t insertOrder, std::optional<Rect4f> clip)
 	: ptr(texts.empty() ? nullptr : &texts[0])
 	, count(uint32_t(texts.size()))
-	, type(SpritePainterEntryType::TextRef)
-	, layer(layer)
 	, tieBreaker(tieBreaker)
-	, insertOrder(insertOrder)
-	, clip(clip)
 {
+	this->clip = clip.value_or(Rect4f {});
+	packedData = packData(SpritePainterEntryType::TextRef, layer, insertOrder, clip.has_value());
 }
 
 SpritePainterEntry::SpritePainterEntry(SpritePainterEntryType type, size_t spriteIdx, size_t count, int layer, float tieBreaker, size_t insertOrder, std::optional<Rect4f> clip)
 	: count(uint32_t(count))
 	, index(static_cast<int>(spriteIdx))
-	, type(type)
-	, layer(layer)
 	, tieBreaker(tieBreaker)
-	, insertOrder(insertOrder)
-	, clip(clip)
-{}
+{
+	this->clip = clip.value_or(Rect4f {});
+	packedData = packData(type, layer, insertOrder, clip.has_value());
+}
 
 bool SpritePainterEntry::operator<(const SpritePainterEntry& o) const
 {
-	if (layer != o.layer) {
-		return layer < o.layer;
-	} else if (tieBreaker != o.tieBreaker) {
-		return tieBreaker < o.tieBreaker;
-	} else {
-		return insertOrder < o.insertOrder;
+	const uint32_t l = packedData & 0xff00000;
+	const uint32_t lo = o.packedData & 0xff00000;
+	
+	if (l != lo) {
+		return l < lo;
 	}
+	
+	if (tieBreaker != o.tieBreaker) {
+		return tieBreaker < o.tieBreaker;
+	}
+
+	const uint32_t i = packedData & 0xfffff;
+	const uint32_t io = o.packedData & 0xfffff;
+	
+	return i < io;
 }
 
 SpritePainterEntryType SpritePainterEntry::getType() const
 {
-	return type;
+	return static_cast<SpritePainterEntryType>(packedData >> 29u);
 }
 
 gsl::span<const Sprite> SpritePainterEntry::getSprites() const
 {
 	Expects(ptr != nullptr);
-	Expects(type == SpritePainterEntryType::SpriteRef);
+	Expects(getType() == SpritePainterEntryType::SpriteRef);
 	return gsl::span<const Sprite>(static_cast<const Sprite*>(ptr), count);
 }
 
 gsl::span<const TextRenderer> SpritePainterEntry::getTexts() const
 {
 	Expects(ptr != nullptr);
-	Expects(type == SpritePainterEntryType::TextRef);
+	Expects(getType() == SpritePainterEntryType::TextRef);
 	return gsl::span<const TextRenderer>(static_cast<const TextRenderer*>(ptr), count);
 }
 
@@ -77,9 +81,30 @@ uint32_t SpritePainterEntry::getCount() const
 	return count;
 }
 
-const std::optional<Rect4f>& SpritePainterEntry::getClip() const
+std::optional<Rect4f> SpritePainterEntry::getClip() const
 {
-	return clip;
+	if ((packedData & 0x10000000) != 0) {
+		return clip;
+	} else {
+		return std::nullopt;
+	}
+}
+
+uint32_t SpritePainterEntry::packData(SpritePainterEntryType type, int layer, size_t insertOrder, bool clip)
+{
+	Expects(layer <= 0xff);
+	Expects(insertOrder <= 0xfffff);
+
+	uint32_t mask = static_cast<uint32_t>(type) << 29u;
+
+	if (clip) {
+		mask |= 0x10000000;
+	}
+	
+	mask |= static_cast<uint32_t>(layer & 0xff) << 20u;
+	mask |= static_cast<uint32_t>(insertOrder & 0xfffff);
+
+	return mask;
 }
 
 void SpritePainterBucket::start()
