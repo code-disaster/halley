@@ -51,6 +51,7 @@ namespace Halley
 
 		size_t curBuffer = 0;
 		std::optional<Rect4i> clipping;
+		int numTextureUnitsBound = 0;
 
 		DX11Blend& getBlendMode(BlendType type);
 		void rotateBuffers();

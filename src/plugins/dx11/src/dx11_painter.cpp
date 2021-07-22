@@ -90,6 +90,15 @@ void DX11Painter::setMaterialPass(const Material& material, int passN)
 		}
 		++textureUnit;
 	}
+
+	// Unbind previously bound but now unused texture units. For example, D3D11 likes to throw
+	// warnings if the texture happens to be used as a render target afterwards.
+	for (int unitToUnbind = textureUnit; unitToUnbind < numTextureUnitsBound; unitToUnbind++) {
+		ID3D11ShaderResourceView* null_views[] = { nullptr };
+		video.getDeviceContext().PSSetShaderResources(unitToUnbind, 1, null_views);
+	}
+
+	numTextureUnitsBound = textureUnit;
 }
 
 void DX11Painter::setMaterialData(const Material& material)
