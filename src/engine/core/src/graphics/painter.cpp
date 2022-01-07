@@ -11,8 +11,11 @@
 #include <gsl/gsl_assert>
 
 
+#include "api/video_api.h"
 #include "halley/maths/bezier.h"
 #include "halley/maths/polygon.h"
+#include "halley/support/profiler.h"
+#include "halley/utils/algorithm.h"
 #include "resources/resources.h"
 
 using namespace Halley;
@@ -25,9 +28,10 @@ struct LineVertex {
 	char _padding[8];
 };
 
-Painter::Painter(Resources& resources)
+Painter::Painter(VideoAPI& video, Resources& resources)
 	: halleyGlobalMaterial(std::make_unique<Material>(resources.get<MaterialDefinition>("Halley/MaterialBase"), true))
 	, resources(resources)
+	, video(video)
 	, solidLineMaterial(std::make_unique<Material>(resources.get<MaterialDefinition>("Halley/SolidLine")))
 	, solidPolygonMaterial(std::make_unique<Material>(resources.get<MaterialDefinition>("Halley/SolidPolygon")))
 	, blitMaterial(std::make_unique<Material>(resources.get<MaterialDefinition>("Halley/Blit")))
@@ -46,6 +50,7 @@ void Painter::startRender()
 	prevVertices = nVertices;
 	nDrawCalls = nTriangles = nVertices = 0;
 
+	refreshConstantBufferCache();
 	resetPending();
 	doStartRender();
 }
@@ -53,6 +58,8 @@ void Painter::startRender()
 void Painter::endRender()
 {
 	flush();
+	
+	ProfilerEvent event(ProfilerEventType::PainterEndRender);
 	doEndRender();
 	camera = Camera();
 	viewPort = Rect4i(0, 0, 0, 0);
@@ -110,6 +117,8 @@ Painter::PainterVertexData Painter::addDrawData(const std::shared_ptr<Material>&
 	verticesPending += numVertices;
 	bytesPending += result.dataSize;
 	allIndicesAreQuads &= standardQuadsOnly;
+
+	pendingDebugGroupStack = curDebugGroupStack;
 
 	return result;
 }
@@ -434,6 +443,18 @@ void Painter::setLogging(bool logging)
 	this->logging = logging;
 }
 
+void Painter::pushDebugGroup(const String& id)
+{
+	flush();
+	curDebugGroupStack.push_back(id);
+}
+
+void Painter::popDebugGroup()
+{
+	flush();
+	curDebugGroupStack.pop_back();
+}
+
 void Painter::makeSpaceForPendingVertices(size_t numBytes)
 {
 	size_t requiredSize = bytesPending + numBytes;
@@ -528,11 +549,33 @@ std::shared_ptr<Material> Painter::getSolidPolygonMaterial()
 	return solidPolygonMaterial;
 }
 
+MaterialConstantBuffer& Painter::getConstantBuffer(const MaterialDataBlock& dataBlock)
+{
+	const uint64_t hash = dataBlock.getHash();
+	const auto iter = constantBuffers.find(hash);
+	if (iter == constantBuffers.end()) {
+		auto buffer = std::shared_ptr<MaterialConstantBuffer>(video.createConstantBuffer());
+		buffer->update(dataBlock.getData());
+		constantBuffers[hash] = ConstantBufferEntry{ buffer, 0 };
+		return *buffer;
+	} else {
+		return *iter->second.buffer;
+	}
+}
+
+void Painter::refreshConstantBufferCache()
+{
+	for (auto& [k, v]: constantBuffers) {
+		++v.age;
+	}
+	std_ex::erase_if_value(constantBuffers, [] (const ConstantBufferEntry& e) { return e.age >= 10; });
+}
+
 void Painter::startDrawCall(const std::shared_ptr<Material>& material)
 {
 	constexpr bool enableDynamicBatching = true;
 
-	if (material != materialPending) {
+	if (material != materialPending || pendingDebugGroupStack != curDebugGroupStack) {
 		if (!enableDynamicBatching || (materialPending != std::shared_ptr<Material>() && !(*material == *materialPending))) {
 			flushPending();
 		}
@@ -559,11 +602,14 @@ void Painter::resetPending()
 		Material::resetBindCache();
 		materialPending.reset();
 	}
+	pendingDebugGroupStack = curDebugGroupStack;
 }
 
 void Painter::executeDrawPrimitives(Material& material, size_t numVertices, void* vertexData, gsl::span<const IndexType> indices, PrimitiveType primitiveType)
 {
 	Expects(primitiveType == PrimitiveType::Triangle);
+
+	ProfilerEvent event(ProfilerEventType::PainterDrawCall);
 
 	startDrawCall();
 
@@ -572,7 +618,6 @@ void Painter::executeDrawPrimitives(Material& material, size_t numVertices, void
 	setVertices(material.getDefinition(), numVertices, vertexData, indices.size(), const_cast<IndexType*>(indices.data()), allIndicesAreQuads);
 
 	// Load material uniforms
-	material.uploadData(*this);
 	setMaterialData(material);
 
 	// Go through each pass
@@ -648,6 +693,11 @@ RenderTarget& Painter::getActiveRenderTarget()
 	return *activeRenderTarget;
 }
 
+const Vector<String>& Painter::getPendingDebugGroupStack() const
+{
+	return pendingDebugGroupStack;
+}
+
 void Painter::generateQuadIndicesOffset(IndexType pos, IndexType lineStride, IndexType* target)
 {
 	// A-----B
@@ -665,6 +715,8 @@ void Painter::generateQuadIndicesOffset(IndexType pos, IndexType lineStride, Ind
 
 void Painter::updateProjection()
 {
+	ProfilerEvent event(ProfilerEventType::PainterUpdateProjection);
+	
 	camera.updateProjection(activeRenderTarget->getProjectionFlipVertical());
 	projection = camera.getProjection();
 

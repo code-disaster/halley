@@ -267,10 +267,7 @@ void SceneEditorWindow::update(Time t, bool moved)
 		}
 	}
 
-	if (buttonsNeedUpdate) {
-		buttonsNeedUpdate = false;
-		updateButtons();
-	}
+	updateButtons();
 
 	if (entityList && gameBridge) {
 		gameBridge->setEntityHighlightedOnList(entityList->getEntityUnderCursor());
@@ -716,14 +713,24 @@ void SceneEditorWindow::panCameraToEntity(const String& id)
 
 void SceneEditorWindow::saveScene()
 {
-	clearModifiedFlag();
-	undoStack.onSave();
+	if (canSave(false)) {
+		clearModifiedFlag();
+		undoStack.onSave();
 
-	const auto strData = prefab->toYAML();
-	project.setAssetSaveNotification(false);
-	project.writeAssetToDisk(assetPath, gsl::as_bytes(gsl::span<const char>(strData.c_str(), strData.length())));
-	gameBridge->onSceneSaved();
-	project.setAssetSaveNotification(true);
+		const auto strData = prefab->toYAML();
+		project.setAssetSaveNotification(false);
+		project.writeAssetToDisk(assetPath, gsl::as_bytes(gsl::span<const char>(strData.c_str(), strData.length())));
+		gameBridge->onSceneSaved();
+		project.setAssetSaveNotification(true);
+	}
+}
+
+bool SceneEditorWindow::canSave(bool forceInstantCheck) const
+{
+	if (forceInstantCheck) {
+		entityList->forceValidationIfWaiting();
+	}
+	return entityList->getValidationSeverity() != IEntityValidator::Severity::Error;
 }
 
 void SceneEditorWindow::markModified()
@@ -1146,7 +1153,6 @@ void SceneEditorWindow::setToolUI(std::shared_ptr<UIWidget> ui)
 void SceneEditorWindow::setModified(bool enabled)
 {
 	modified = enabled;
-	buttonsNeedUpdate = true;
 }
 
 bool SceneEditorWindow::isModified() const
@@ -1325,7 +1331,7 @@ void SceneEditorWindow::setupConsoleCommands()
 
 void SceneEditorWindow::updateButtons()
 {
-	getWidgetAs<UIButton>("saveButton")->setEnabled(modified);
+	getWidgetAs<UIButton>("saveButton")->setEnabled(modified && canSave(false));
 	getWidgetAs<UIButton>("undoButton")->setEnabled(undoStack.canUndo());
 	getWidgetAs<UIButton>("redoButton")->setEnabled(undoStack.canRedo());
 }

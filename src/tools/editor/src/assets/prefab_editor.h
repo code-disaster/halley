@@ -11,6 +11,7 @@ namespace Halley {
 		void onDoubleClick() override;
 		bool isModified() override;
 		void save() override;
+		bool canSave(bool forceInstantCheck) const override;
 
 	protected:
 		void update(Time t, bool moved) override;

@@ -5,6 +5,7 @@
 #include "halley/core/graphics/texture.h"
 #include "halley/core/graphics/material/material_parameter.h"
 #include <gsl/gsl>
+#include <bitset>
 
 namespace Halley
 {
@@ -24,10 +25,10 @@ namespace Halley
 	public:
 		virtual ~MaterialConstantBuffer() {}
 
-		virtual void update(const MaterialDataBlock& dataBlock) = 0;
+		virtual void update(gsl::span<const gsl::byte> data) = 0;
 	};
 
-	enum class MaterialDataBlockType
+	enum class MaterialDataBlockType : uint8_t
 	{
 		// Shared blocks are not stored locally in the material (e.g. the HalleyBlock, stored by the engine)
 		SharedLocal,    // Shared, this keeps the canonical copy
@@ -45,22 +46,21 @@ namespace Halley
 		MaterialDataBlock(const MaterialDataBlock& other);
 		MaterialDataBlock(MaterialDataBlock&& other) noexcept;
 
-		MaterialConstantBuffer& getConstantBuffer() const;
 		int getAddress(int pass, ShaderType stage) const;
 		int getBindPoint() const;
 		gsl::span<const gsl::byte> getData() const;
 		MaterialDataBlockType getType() const;
+		uint64_t getHash() const;
 
 	private:
-		std::unique_ptr<MaterialConstantBuffer> constantBuffer;
 		Bytes data;
 		Vector<int> addresses;
 		MaterialDataBlockType dataBlockType = MaterialDataBlockType::Local;
-		int bindPoint = 0;
-		bool dirty = true;
+		mutable bool needToUpdateHash = true;
+		int16_t bindPoint = 0;
+		mutable uint64_t hash = 0;
 
 		bool setUniform(size_t offset, ShaderParameterType type, const void* data);
-		void upload(VideoAPI* api);
 	};
 	
 	class Material
@@ -73,7 +73,6 @@ namespace Halley
 		explicit Material(std::shared_ptr<const MaterialDefinition> materialDefinition, bool forceLocalBlocks = false); // forceLocalBlocks is for engine use only
 
 		void bind(int pass, Painter& painter);
-		void uploadData(Painter& painter);
 		static void resetBindCache();
 
 		bool operator==(const Material& material) const;
@@ -125,13 +124,11 @@ namespace Halley
 		Vector<MaterialTextureParameter> textureUniforms;
 		Vector<MaterialDataBlock> dataBlocks;
 		std::vector<std::shared_ptr<const Texture>> textures;
-		std::array<bool, 8> passEnabled;
 
 		mutable uint64_t hashValue = 0;
 		mutable bool needToUpdateHash = true;
-		bool needToUploadData = true;
-
 		std::optional<uint8_t> stencilReferenceOverride;
+		std::bitset<8> passEnabled;
 
 		void initUniforms(bool forceLocalBlocks);
 		MaterialParameter& getParameter(const String& name);

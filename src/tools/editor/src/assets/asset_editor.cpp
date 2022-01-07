@@ -62,6 +62,11 @@ void AssetEditor::save()
 {
 }
 
+bool AssetEditor::canSave(bool forceInstantCheck) const
+{
+	return true;
+}
+
 void AssetEditor::onTabbedIn()
 {
 }

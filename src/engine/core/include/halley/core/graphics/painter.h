@@ -8,10 +8,14 @@
 
 
 #include "texture.h"
+#include "halley/data_structures/hash_map.h"
 #include "halley/maths/circle.h"
 
 namespace Halley
 {
+	class VideoAPI;
+	class MaterialDataBlock;
+	class MaterialConstantBuffer;
 	class BezierCubic;
 	class BezierQuadratic;
 	class Polygon;
@@ -39,7 +43,7 @@ namespace Halley
 		};
 
 	public:
-		Painter(Resources& resources);
+		Painter(VideoAPI& video, Resources& resources);
 		virtual ~Painter();
 
 		void flush();
@@ -100,6 +104,9 @@ namespace Halley
 
 		void setLogging(bool logging);
 
+		void pushDebugGroup(const String& id);
+		void popDebugGroup();
+
 	protected:
 		virtual void startDrawCall() {}
 		virtual void endDrawCall() {}
@@ -115,10 +122,21 @@ namespace Halley
 		void generateQuadIndices(IndexType firstVertex, size_t numQuads, IndexType* target);
 		RenderTarget& getActiveRenderTarget();
 
+		const Vector<String>& getPendingDebugGroupStack() const;
+
+		MaterialConstantBuffer& getConstantBuffer(const MaterialDataBlock& dataBlock);
+
 		std::unique_ptr<Material> halleyGlobalMaterial;
 
 	private:
+		class ConstantBufferEntry {
+		public:
+			std::shared_ptr<MaterialConstantBuffer> buffer;
+			int age = 0;
+		};
+		
 		Resources& resources;
+		VideoAPI& video;
 		RenderContext* activeContext = nullptr;
 		RenderTarget* activeRenderTarget = nullptr;
 		Matrix4f projection;
@@ -148,6 +166,11 @@ namespace Halley
 		std::optional<Rect4i> curClip;
 		std::optional<Rect4i> pendingClip;
 
+		Vector<String> curDebugGroupStack;
+		Vector<String> pendingDebugGroupStack;
+
+		HashMap<uint64_t, ConstantBufferEntry> constantBuffers;
+
 		void bind(RenderContext& context);
 		void unbind(RenderContext& context);
 		
@@ -173,5 +196,7 @@ namespace Halley
 
 		std::shared_ptr<Material> getSolidLineMaterial();
 		std::shared_ptr<Material> getSolidPolygonMaterial();
+
+		void refreshConstantBufferCache();
 	};
 }

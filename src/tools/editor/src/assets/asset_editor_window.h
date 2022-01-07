@@ -23,6 +23,7 @@ namespace Halley {
 		Path getCurrentAssetPath() const;
 
 		bool isModified() const;
+		bool canSave(bool forceInstantCheck) const;
 		void save();
 		String getName() const;
 

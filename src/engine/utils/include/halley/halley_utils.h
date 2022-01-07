@@ -81,6 +81,7 @@ namespace Halley {} // Get GitHub to realise this is C++ :3
 #include "support/exception.h"
 #include "support/logger.h"
 #include "support/redirect_stream.h"
+#include "support/profiler.h"
 
 #include "text/encode.h"
 #include "text/fuzzy_text_matcher.h"
@@ -94,6 +95,7 @@ namespace Halley {} // Get GitHub to realise this is C++ :3
 
 #include "utils/algorithm.h"
 #include "utils/attributes.h"
+#include "utils/averaging.h"
 #include "utils/encrypt.h"
 #include "utils/hash.h"
 #include "utils/type_traits.h"

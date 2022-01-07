@@ -11,6 +11,7 @@ using namespace Halley;
 
 static Material* currentMaterial = nullptr;
 static int currentPass = 0;
+static uint64_t currentHash = 0;
 
 constexpr static int shaderStageCount = int(ShaderType::NumOfShaderTypes);
 
@@ -22,7 +23,7 @@ MaterialDataBlock::MaterialDataBlock(MaterialDataBlockType type, size_t size, in
 	: data(type == MaterialDataBlockType::SharedExternal ? 0 : size, 0)
 	, addresses(def.getNumPasses() * shaderStageCount)
 	, dataBlockType(type)
-	, bindPoint(bindPoint)
+	, bindPoint(static_cast<int16_t>(bindPoint))
 {
 	for (int i = 0; i < def.getNumPasses(); ++i) {
 		auto& shader = def.getPass(i).getShader();
@@ -37,22 +38,19 @@ MaterialDataBlock::MaterialDataBlock(const MaterialDataBlock& other)
 	, addresses(other.addresses)
 	, dataBlockType(other.dataBlockType)
 	, bindPoint(other.bindPoint)
-	, dirty(true)
+	, needToUpdateHash(other.needToUpdateHash)
+	, hash(other.hash)
 {}
 
 MaterialDataBlock::MaterialDataBlock(MaterialDataBlock&& other) noexcept
-	: constantBuffer(std::move(other.constantBuffer))
-	, data(std::move(other.data))
+	: data(std::move(other.data))
 	, addresses(std::move(other.addresses))
 	, dataBlockType(other.dataBlockType)
 	, bindPoint(other.bindPoint)
-	, dirty(other.dirty)
-{}
-
-MaterialConstantBuffer& MaterialDataBlock::getConstantBuffer() const
+	, needToUpdateHash(other.needToUpdateHash)
+	, hash(other.hash)
 {
-	Expects(constantBuffer != nullptr);
-	return *constantBuffer;
+	other.hash = 0;
 }
 
 int MaterialDataBlock::getAddress(int pass, ShaderType stage) const
@@ -75,6 +73,17 @@ MaterialDataBlockType MaterialDataBlock::getType() const
 	return dataBlockType;
 }
 
+uint64_t MaterialDataBlock::getHash() const
+{
+	if (needToUpdateHash) {
+		needToUpdateHash = false;
+		Hash::Hasher hasher;
+		hasher.feedBytes(getData());
+		hash = hasher.digest();
+	}
+	return hash;
+}
+
 bool MaterialDataBlock::setUniform(size_t offset, ShaderParameterType type, const void* srcData)
 {
 	Expects(dataBlockType != MaterialDataBlockType::SharedExternal);
@@ -85,24 +94,10 @@ bool MaterialDataBlock::setUniform(size_t offset, ShaderParameterType type, cons
 
 	if (memcmp(data.data() + offset, srcData, size) != 0) {
 		memcpy(data.data() + offset, srcData, size);
-		dirty = true;
+		needToUpdateHash = true;
 		return true;
 	} else {
 		return false;
-	}
-}
-
-void MaterialDataBlock::upload(VideoAPI* api)
-{
-	if (dataBlockType != MaterialDataBlockType::SharedExternal) {
-		if (!constantBuffer) {
-			constantBuffer = api->createConstantBuffer();
-			dirty = true;
-		}
-		if (dirty) {
-			constantBuffer->update(*this);
-			dirty = false;
-		}
 	}
 }
 
@@ -113,6 +108,7 @@ Material::Material(const Material& other)
 	, dataBlocks(other.dataBlocks)
 	, textures(other.textures)
 	, passEnabled(other.passEnabled)
+	, stencilReferenceOverride(other.stencilReferenceOverride)
 {
 	for (auto& u: uniforms) {
 		u.rebind(*this);
@@ -126,10 +122,12 @@ Material::Material(Material&& other) noexcept
 	, dataBlocks(std::move(other.dataBlocks))
 	, textures(std::move(other.textures))
 	, passEnabled(other.passEnabled)
+	, stencilReferenceOverride(other.stencilReferenceOverride)
 {
 	for (auto& u: uniforms) {
 		u.rebind(*this);
 	}
+	other.hashValue = 0;
 }
 
 Material::Material(std::shared_ptr<const MaterialDefinition> definition, bool forceLocalBlocks)
@@ -186,29 +184,21 @@ void Material::initUniforms(bool forceLocalBlocks)
 void Material::bind(int passNumber, Painter& painter)
 {
 	// Avoid redundant work
-	if (currentMaterial == this && currentPass == passNumber && !needToUploadData) {
+	if (currentMaterial == this && currentPass == passNumber && currentHash == getHash()) {
 		return;
 	}
 	currentMaterial = this;
 	currentPass = passNumber;
+	currentHash = getHash();
 
 	painter.setMaterialPass(*this, passNumber);
-}
-
-void Material::uploadData(Painter& painter)
-{	
-	if (needToUploadData) {
-		for (auto& block: dataBlocks) {
-			block.upload(getDefinition().api);
-		}
-		needToUploadData = false;
-	}
 }
 
 void Material::resetBindCache()
 {
 	currentMaterial = nullptr;
 	currentPass = 0;
+	currentHash = 0;
 }
 
 bool Material::operator==(const Material& other) const
@@ -216,11 +206,6 @@ bool Material::operator==(const Material& other) const
 	// Same instance
 	if (this == &other) {
 		return true;
-	}
-
-	// Different definitions
-	if (materialDefinition != other.materialDefinition) {
-		return false;
 	}
 
 	constexpr bool useHash = true;
@@ -232,6 +217,11 @@ bool Material::operator==(const Material& other) const
 		// :D :D :D
 		return getHash() == other.getHash();
 	} else {
+		// Different definitions
+		if (materialDefinition != other.materialDefinition) {
+			return false;
+		}
+		
 		// Different textures (only need to check pointer equality)
 		for (size_t i = 0; i < textures.size(); ++i) {
 			if (textures[i] != other.textures[i]) {
@@ -289,7 +279,6 @@ size_t Material::getNumTextureUnits() const
 bool Material::setUniform(int blockNumber, size_t offset, ShaderParameterType type, const void* data)
 {
 	if (dataBlocks[blockNumber].setUniform(offset, type, data)) {
-		needToUploadData = true;
 		needToUpdateHash = true;
 		return true;
 	}
@@ -299,6 +288,8 @@ bool Material::setUniform(int blockNumber, size_t offset, ShaderParameterType ty
 uint64_t Material::computeHash() const
 {
 	Hash::Hasher hasher;
+
+	hasher.feed(materialDefinition.get());
 	
 	for (const auto& texture: textures) {
 		hasher.feed(texture.get());
@@ -310,8 +301,7 @@ uint64_t Material::computeHash() const
 
 	hasher.feed(stencilReferenceOverride.has_value());
 	hasher.feed(stencilReferenceOverride.value_or(0));
-
-	hasher.feedBytes(gsl::as_bytes(gsl::span<const bool>(passEnabled.data(), passEnabled.size())));
+	hasher.feed(passEnabled.to_ulong());
 
 	return hasher.digest();
 }
@@ -347,10 +337,9 @@ const Vector<MaterialDataBlock>& Material::getDataBlocks() const
 
 void Material::setPassEnabled(int pass, bool enabled)
 {
-	auto& p = passEnabled.at(pass);
-	if (p != enabled) {
+	if (passEnabled[pass] != enabled) {
 		needToUpdateHash = true;
-		p = enabled;
+		passEnabled[pass] = enabled;
 	}
 }
 

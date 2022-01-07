@@ -36,6 +36,11 @@ void PrefabEditor::save()
 	}
 }
 
+bool PrefabEditor::canSave(bool forceInstantCheck) const
+{
+	return window && window->canSave(forceInstantCheck);
+}
+
 void PrefabEditor::update(Time t, bool moved)
 {
 	if (pendingLoad && project.isDLLLoaded()) {

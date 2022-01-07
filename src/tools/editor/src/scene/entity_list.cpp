@@ -23,8 +23,6 @@ void EntityList::update(Time t, bool moved)
 	if (validationTimeout >= 0) {
 		validationTimeout -= t;
 	} else if (needsToValidateAllEntities) {
-		validationTimeout = 0.4;
-		needsToValidateAllEntities = false;
 		doValidateAllEntities();
 	}
 }
@@ -90,7 +88,7 @@ void EntityList::addEntity(const EntityData& data, const String& parentId, int c
 	const auto info = getEntityInfo(data);
 	const size_t idx = childIndex >= 0 ? static_cast<size_t>(childIndex) : std::numeric_limits<size_t>::max();
 	list->addTreeItem(data.getInstanceUUID().toString(), parentId, idx, LocalisedString::fromUserString(info.name), isPrefab ? "labelSpecial" : "label", info.icon, isPrefab);
-	markValid(data.getInstanceUUID(), info.valid);
+	markValid(data.getInstanceUUID(), info.severity);
 }
 
 void EntityList::addEntityTree(const String& parentId, int childIndex, const EntityData& data)
@@ -109,21 +107,21 @@ EntityList::EntityInfo EntityList::getEntityInfo(const EntityData& data) const
 	if (data.getPrefab().isEmpty()) {
 		result.name = data.getName().isEmpty() ? String("Unnamed Entity") : data.getName();
 		result.icon = icons->getIcon(data.getIcon());
-		result.valid = isEntityValid(data, false);
+		result.severity = getEntitySeverity(data, false);
 	} else {
 		if (const auto prefab = sceneEditorWindow->getGamePrefab(data.getPrefab())) {
 			result.name = prefab->getPrefabName();
 			result.icon = icons->getIcon(prefab->getPrefabIcon());
-			result.valid = isEntityValid(prefab->getEntityData().instantiateWithAsCopy(data), true);
+			result.severity = getEntitySeverity(prefab->getEntityData().instantiateWithAsCopy(data), true);
 		} else {
 			result.name = "Missing prefab! [" + data.getPrefab() + "]";
 			result.icon = icons->getIcon("");
-			result.valid = false;
+			result.severity = IEntityValidator::Severity::None;
 		}
 	}
 
-	if (!result.valid) {
-		result.icon = icons->getInvalidEntityIcon();
+	if (result.severity != IEntityValidator::Severity::None) {
+		result.icon = icons->getInvalidEntityIcon(result.severity);
 	}
 
 	return result;
@@ -159,7 +157,7 @@ void EntityList::onEntityModified(const String& id, const EntityData& node)
 void EntityList::onEntityModified(const String& id, const EntityData& node, bool onlyRefreshValidation)
 {
 	auto info = getEntityInfo(node);
-	const bool validationChanged = markValid(node.getInstanceUUID(), info.valid);
+	const bool validationChanged = markValid(node.getInstanceUUID(), info.severity);
 	if (validationChanged || !onlyRefreshValidation) {
 		list->setLabel(id, LocalisedString::fromUserString(info.name), std::move(info.icon));
 	}
@@ -185,7 +183,7 @@ void EntityList::onEntitiesRemoved(gsl::span<const String> ids, const String& ne
 {
 	for (const auto& id: ids) {
 		list->removeItem(id);
-		markValid(UUID(id), true);
+		markValid(UUID(id), IEntityValidator::Severity::None);
 	}
 	list->sortItems();
 	layout();
@@ -312,14 +310,22 @@ bool EntityList::markAllValid()
 	return false;
 }
 
-bool EntityList::markValid(const UUID& uuid, bool valid)
+bool EntityList::markValid(const UUID& uuid, IEntityValidator::Severity severity)
 {
 	bool modified = false;
-	if (valid) {
+	if (severity == IEntityValidator::Severity::None) {
 		modified = invalidEntities.erase(uuid) > 0;
 	} else {
-		auto [iter, inserted] = invalidEntities.insert(uuid);
-		modified = inserted;
+		auto iter = invalidEntities.find(uuid);
+		if (iter != invalidEntities.end()) {
+			if (iter->second != severity) {
+				iter->second = severity;
+				modified = true;
+			}
+		} else {
+			invalidEntities[uuid] = severity;
+			modified = true;
+		}
 	}
 
 	if (modified) {
@@ -330,14 +336,17 @@ bool EntityList::markValid(const UUID& uuid, bool valid)
 
 void EntityList::notifyValidatorList()
 {
-	std::vector<int> result;
+	std::vector<std::pair<int, IEntityValidator::Severity>> result;
 	result.reserve(invalidEntities.size());
+	validationSeverity = IEntityValidator::Severity::None;
 
 	const auto n = list->getCount();
 	for (size_t i = 0; i < n; ++i) {
 		const auto& id = list->getItem(static_cast<int>(i))->getId();
-		if (std_ex::contains(invalidEntities, UUID(id))) {
-			result.push_back(static_cast<int>(i));
+		const auto iter = invalidEntities.find(UUID(id));
+		if (iter != invalidEntities.end()) {
+			result.emplace_back(static_cast<int>(i), iter->second);
+			validationSeverity = std::max(validationSeverity, iter->second);
 		}
 	}
 	validatorList->setInvalidEntities(std::move(result));
@@ -348,8 +357,30 @@ void EntityList::validateAllEntities()
 	needsToValidateAllEntities = true;
 }
 
+IEntityValidator::Severity EntityList::getValidationSeverity() const
+{
+	return validationSeverity;
+}
+
+bool EntityList::isWaitingToValidate() const
+{
+	return needsToValidateAllEntities;
+}
+
+void EntityList::forceValidationIfWaiting()
+{
+	if (needsToValidateAllEntities) {
+		doValidateAllEntities();
+	}
+	if (needsToNotifyValidatorList) {
+		notifyValidatorList();
+	}
+}
+
 void EntityList::doValidateAllEntities()
 {
+	validationTimeout = 0.1;
+	needsToValidateAllEntities = false;
 	validateEntityTree(sceneEditorWindow->getSceneData()->getEntityTree());
 }
 
@@ -363,7 +394,11 @@ void EntityList::validateEntityTree(const EntityTree& entityTree)
 	}
 }
 
-bool EntityList::isEntityValid(const EntityData& entityData, bool recursive) const
+IEntityValidator::Severity EntityList::getEntitySeverity(const EntityData& entityData, bool recursive) const
 {
-	return sceneEditorWindow->getEntityValidator().validateEntity(entityData, recursive).empty();
+	auto severity = IEntityValidator::Severity::None;
+	for (const auto& s: sceneEditorWindow->getEntityValidator().validateEntity(entityData, recursive)) {
+		severity = std::max(severity, s.severity);
+	}
+	return severity;
 }

@@ -30,17 +30,15 @@ namespace Halley {
 	class World
 	{
 	public:
-		World(const HalleyAPI& api, Resources& resources, bool collectMetrics, CreateComponentFunction createComponent);
+		World(const HalleyAPI& api, Resources& resources, CreateComponentFunction createComponent);
 		~World();
 
 		static std::unique_ptr<World> make(const HalleyAPI& api, Resources& resources, const String& sceneName, bool devMode);
 
 		void step(TimeLine timeline, Time elapsed);
-		void render(RenderContext& rc) const;
+		void render(RenderContext& rc);
 		bool hasSystemsOnTimeLine(TimeLine timeline) const;
 		
-		int64_t getAverageTime(TimeLine timeline) const;
-
 		System& addSystem(std::unique_ptr<System> system, TimeLine timeline);
 		void removeSystem(System& system);
 		Vector<System*> getSystems();
@@ -134,7 +132,6 @@ namespace Halley {
 		Resources& resources;
 		std::array<Vector<std::unique_ptr<System>>, static_cast<int>(TimeLine::NUMBER_OF_TIMELINES)> systems;
 		CreateComponentFunction createComponent;
-		bool collectMetrics = false;
 		bool entityDirty = false;
 		bool entityReloaded = false;
 		bool editor = false;
@@ -154,13 +151,11 @@ namespace Halley {
 		std::shared_ptr<ComponentDeleterTable> componentDeleterTable;
 		std::shared_ptr<PoolAllocator<Entity>> entityPool;
 
-		mutable std::array<StopwatchRollingAveraging, 3> timer;
-
 		std::list<SystemMessageContext> pendingSystemMessages;
 
 		void allocateEntity(Entity* entity);
 		void updateEntities();
-		void initSystems();
+		void initSystems(gsl::span<const TimeLine> timelines);
 
 		void doDestroyEntity(EntityId id);
 		void doDestroyEntity(Entity* entity);
