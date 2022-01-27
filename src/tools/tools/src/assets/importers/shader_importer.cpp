@@ -15,8 +15,8 @@
 
 using namespace Halley;
 
-String ShaderImporter::glslShaderName;
-FlatMap<String, int> ShaderImporter::glslVariantMap;
+thread_local String glslShaderName;
+thread_local FlatMap<String, int> glslVariantMap;
 
 void ShaderImporter::import(const ImportingAsset& asset, IAssetCollector& collector)
 {
@@ -171,6 +171,9 @@ Bytes ShaderImporter::compileHLSL(const String& name, ShaderType type, const Byt
 	2) ShaderConductor prefixes variants with "out_var_" in vertex shaders, but
 	"in_var_" in pixel shaders. This confuses GLSL with older versions. Here we
 	"normalize" them to have the same identifiers on both sides.
+
+	3) Uniform block definitions are rewritten to "type_<Name> { ... } Name",
+	which breaks lookup by name on the C++ side. We undo this.
 */
 void ShaderImporter::patchGLSL(const String& name, ShaderType type, Bytes& data)
 {
@@ -247,11 +250,6 @@ void ShaderImporter::patchGLSL(const String& name, ShaderType type, Bytes& data)
 		// Rename the remaining/used inputs.
 
 		code = code.replaceAll("in_var_", "xy_var_");
-
-		// Write patched code.
-
-		data.resize(code.size() - 1);
-		memcpy(data.data(), code.c_str(), data.size());
 	} else {
 		if (type == ShaderType::Pixel) {
 			Logger::logWarning("Patching GLSL only works if vertex shader is compiled after pixel shader!");
@@ -304,10 +302,30 @@ void ShaderImporter::patchGLSL(const String& name, ShaderType type, Bytes& data)
 		// Rename the remaining/used outputs.
 
 		code = code.replaceAll("out_var_", "xy_var_");
-
-		// Write patched code.
-
-		data.resize(code.size() - 1);
-		memcpy(data.data(), code.c_str(), data.size());
 	}
+
+	// Search for uniform blocks.
+
+	{
+		size_t pos = 0;
+		while (pos != String::npos) {
+			size_t n = code.find("uniform type_");
+			if (n != String::npos) {
+				n += 8;
+				size_t ne = n + 5;
+				while (isalnum(code[ne])) ne++;
+				String blockTypeName = code.substr(n, ne - n);
+				String blockName = blockTypeName.substr(5);
+				code = code.replaceAll(" " + blockName + ";", ";");
+				code = code.replaceAll(blockName + ".", "");
+				code = code.replaceAll(blockTypeName, blockName);
+			}
+			pos = n;
+		}
+	}
+
+	// Write patched code.
+
+	data.resize(code.size() - 1);
+	memcpy(data.data(), code.c_str(), data.size());
 }

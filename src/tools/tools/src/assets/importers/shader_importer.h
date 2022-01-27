@@ -16,8 +16,5 @@ namespace Halley
 
 	private:
 		static void patchGLSL(const String& name, ShaderType type, Bytes& data);
-
-		static String glslShaderName;
-		static FlatMap<String, int> glslVariantMap;
 	};
 }
