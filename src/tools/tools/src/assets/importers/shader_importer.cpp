@@ -174,6 +174,8 @@ Bytes ShaderImporter::compileHLSL(const String& name, ShaderType type, const Byt
 
 	3) Uniform block definitions are rewritten to "type_<Name> { ... } Name",
 	which breaks lookup by name on the C++ side. We undo this.
+
+	4) Sampler names get mangled too. We try to revert them to the original names.
 */
 void ShaderImporter::patchGLSL(const String& name, ShaderType type, Bytes& data)
 {
@@ -250,6 +252,26 @@ void ShaderImporter::patchGLSL(const String& name, ShaderType type, Bytes& data)
 		// Rename the remaining/used inputs.
 
 		code = code.replaceAll("in_var_", "xy_var_");
+
+		// Search for sampler uniforms.
+
+		{
+			size_t pos = 0;
+			while (pos != String::npos) {
+				size_t n = code.find("uniform sampler2D SPIRV_Cross_Combined");
+				if (n != String::npos) {
+					n += 18;
+					size_t nn = n + 20;
+					size_t ne = nn + 1;
+					while (isalnum(code[ne]) && strncmp(&code[ne], "sampler", 7) != 0) ne++;
+					String samplerName = code.substr(nn, ne - nn);
+					while (isalnum(code[ne])) ne++;
+					String fullSamplerName = code.substr(n, ne - n);
+					code = code.replaceAll(fullSamplerName, samplerName);
+				}
+				pos = n;
+			}
+		}
 	} else {
 		if (type == ShaderType::Pixel) {
 			Logger::logWarning("Patching GLSL only works if vertex shader is compiled after pixel shader!");
