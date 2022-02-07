@@ -10,20 +10,20 @@ std::unique_ptr<NetworkService> DummyNetworkAPI::createService(NetworkProtocol p
 	return std::make_unique<DummyNetworkService>();
 }
 
-void DummyNetworkService::update()
-{	
-}
-
-void DummyNetworkService::setAcceptingConnections(bool accepting)
+void DummyNetworkService::update(Time t)
 {
+	NetworkServiceWithStats::update(t);
 }
 
-std::shared_ptr<IConnection> DummyNetworkService::tryAcceptConnection()
+String DummyNetworkService::startListening(AcceptCallback callback)
 {
-	return std::shared_ptr<IConnection>();
+	return "";
 }
 
-std::shared_ptr<IConnection> DummyNetworkService::connect(String address, int port)
+void DummyNetworkService::stopListening()
+{}
+
+std::shared_ptr<IConnection> DummyNetworkService::connect(const String& address)
 {
 	return std::shared_ptr<IConnection>();
 }

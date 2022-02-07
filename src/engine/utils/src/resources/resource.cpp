@@ -91,6 +91,34 @@ AsyncResource::~AsyncResource()
 	waitForLoad();
 }
 
+AsyncResource::AsyncResource(const AsyncResource& other)
+{
+	other.waitForLoad();
+	*this = other;
+}
+
+AsyncResource::AsyncResource(AsyncResource&& other) noexcept
+{
+	other.waitForLoad();
+	*this = std::move(other);
+}
+
+AsyncResource& AsyncResource::operator=(const AsyncResource& other)
+{
+	other.waitForLoad();
+	failed.store(other.failed);
+	Resource::operator=(static_cast<const Resource&>(other));
+	return *this;
+}
+
+AsyncResource& AsyncResource::operator=(AsyncResource&& other) noexcept
+{
+	other.waitForLoad();
+	failed.store(other.failed);
+	Resource::operator=(static_cast<Resource&&>(other));
+	return *this;
+}
+
 void AsyncResource::startLoading()
 {
 	loading = true;
@@ -112,7 +140,7 @@ void AsyncResource::loadingFailed()
 	doneLoading();
 }
 
-void AsyncResource::waitForLoad() const
+void AsyncResource::waitForLoad(bool acceptFailed) const
 {
 	if (loading) {
 		std::unique_lock<std::mutex> lock(loadMutex);
@@ -120,7 +148,7 @@ void AsyncResource::waitForLoad() const
 			loadWait.wait(lock);
 		}
 	}
-	if (failed) {
+	if (failed && !acceptFailed) {
 		throw Exception("Resource failed to load.", HalleyExceptions::Resources);
 	}
 }
@@ -128,4 +156,14 @@ void AsyncResource::waitForLoad() const
 bool AsyncResource::isLoaded() const
 {
 	return !loading;
+}
+
+bool AsyncResource::hasSucceeded() const
+{
+	return !failed;
+}
+
+bool AsyncResource::hasFailed() const
+{
+	return failed;
 }

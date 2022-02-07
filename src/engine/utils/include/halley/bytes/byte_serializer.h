@@ -16,8 +16,10 @@
 #include "halley/data_structures/maybe.h"
 #include "halley/maths/colour.h"
 #include "halley/maths/vector4.h"
+#include "iserialization_dictionary.h"
 
 namespace Halley {
+	class World;
 	class String;
 
 	class SerializerOptions {
@@ -26,8 +28,8 @@ namespace Halley {
 		
 		int version = 0;
 		bool exhaustiveDictionary = false;
-		std::function<std::optional<size_t>(const String& string)> stringToIndex;
-		std::function<const String&(size_t index)> indexToString;
+		ISerializationDictionary* dictionary = nullptr;
+		World* world = nullptr;
 
 		SerializerOptions() = default;
 		SerializerOptions(int version)
@@ -53,6 +55,7 @@ namespace Halley {
 
 		int getVersion() const { return version; }
 		void setVersion(int v) { version = v; }
+		const SerializerOptions& getOptions() const { return options; }
 
 	protected:
 		SerializerOptions options;
@@ -61,7 +64,7 @@ namespace Halley {
 		SerializerState* state = nullptr;
 		int version = 0;
 	};
-		
+
 	class Serializer : public ByteSerializationBase {
 	public:
 		Serializer(SerializerOptions options);

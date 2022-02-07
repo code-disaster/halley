@@ -109,7 +109,7 @@ EntityList::EntityInfo EntityList::getEntityInfo(const EntityData& data) const
 		result.icon = icons->getIcon(data.getIcon());
 		result.severity = getEntitySeverity(data, false);
 	} else {
-		if (const auto prefab = sceneEditorWindow->getGamePrefab(data.getPrefab())) {
+		if (const auto prefab = sceneEditorWindow->getGamePrefab(data.getPrefab()); prefab && !prefab->hasFailed()) {
 			result.name = prefab->getPrefabName();
 			result.icon = icons->getIcon(prefab->getPrefabIcon());
 			result.severity = getEntitySeverity(prefab->getEntityData().instantiateWithAsCopy(data), true);
@@ -149,9 +149,10 @@ void EntityList::refreshNames()
 	refreshList();
 }
 
-void EntityList::onEntityModified(const String& id, const EntityData& node)
+void EntityList::onEntityModified(const String& id, const EntityData* prevData, const EntityData& newData)
 {
-	onEntityModified(id, node, false);
+	const bool hasListChange = !prevData || newData.getName() != prevData->getName() || newData.getIcon() != prevData->getIcon() || newData.getPrefab() != prevData->getPrefab();
+	onEntityModified(id, newData, !hasListChange);
 }
 
 void EntityList::onEntityModified(const String& id, const EntityData& node, bool onlyRefreshValidation)

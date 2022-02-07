@@ -1,4 +1,5 @@
 #pragma once
+#include "halley/time/halleytime.h"
 
 namespace Halley {
 	class Deserializer;
@@ -12,10 +13,15 @@ namespace Halley {
 		void markUnmodified();
 		bool isModified() const;
 
-		virtual void serialize(Serializer& s) const = 0;
-		virtual void deserialize(Deserializer& s) = 0;
+		Time getTimeSinceLastSend() const;
+		void markSent();
+		void update(Time t);
+
+		virtual void serialize(Serializer& s) const;
+		virtual void deserialize(Deserializer& s);
 
 	private:
 		bool modified = false;
+		Time timeSinceLastSend = 0.0;
     };
 }

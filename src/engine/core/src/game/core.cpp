@@ -53,7 +53,8 @@ Core::Core(std::unique_ptr<Game> g, Vector<std::string> _args)
 	// Console
 	if (game->shouldCreateSeparateConsole()) {
 		hasConsole = true;
-		OS::get().createLogConsole(game->getName());
+		const auto info = game->getConsoleInfo();
+		OS::get().createLogConsole(info.name, info.monitor, info.monitorAlign);
 		OS::get().initializeConsole();
 	}
 	setOutRedirect(false);
@@ -318,7 +319,7 @@ void Core::runPreVariableUpdate(Time time)
 {
 	if (devConClient) {
 		ProfilerEvent event(ProfilerEventType::CoreDevConClient);
-		devConClient->update();
+		devConClient->update(time);
 	}
 }
 

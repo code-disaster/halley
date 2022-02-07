@@ -179,12 +179,19 @@ namespace Halley
 		AsyncResource();
 		virtual ~AsyncResource();
 
+		AsyncResource(const AsyncResource& other);
+		AsyncResource(AsyncResource&& other) noexcept;
+		AsyncResource& operator=(const AsyncResource& other);
+		AsyncResource& operator=(AsyncResource&& other) noexcept;
+
 		void startLoading(); // call from main thread before spinning worker thread
 		void doneLoading();  // call from worker thread when done loading
 		void loadingFailed(); // Call from worker thread if loading fails
-		void waitForLoad() const;
+		void waitForLoad(bool acceptFailed = false) const;
 
 		bool isLoaded() const;
+		bool hasSucceeded() const;
+		bool hasFailed() const;
 
 	private:
 		std::atomic<bool> failed;

@@ -43,8 +43,13 @@ namespace Halley {
 
 		void updateEntity(EntityRef& entity, const IEntityData& data, int serializationMask, EntityScene* scene = nullptr);
 
-		EntityData serializeEntity(EntityRef entity, const SerializationOptions& options, bool canStoreParent = true);
+		std::pair<EntityRef, std::optional<UUID>> loadEntityDelta(const EntityDataDelta& delta, const std::optional<UUID>& uuidSrc); // Returns entity and parent UUID
+		std::tuple<EntityData, std::shared_ptr<const Prefab>, UUID> prefabDeltaToEntityData(const EntityDataDelta& delta);
 
+		EntityData serializeEntity(EntityRef entity, const SerializationOptions& options, bool canStoreParent = true);
+		EntityDataDelta serializeEntityAsDelta(EntityRef entity, const SerializationOptions& options, const EntityDataDelta::Options& deltaOptions, bool canStoreParent = true);
+		EntityDataDelta entityDataToPrefabDelta(EntityData data, std::shared_ptr<const Prefab> prefab, const EntityDataDelta::Options& deltaOptions);
+		
 		std::shared_ptr<EntityFactoryContext> makeStandaloneContext();
 
 	private:
@@ -97,7 +102,7 @@ namespace Halley {
 		}
 
 		const std::shared_ptr<const Prefab>& getPrefab() const { return prefab; }
-		const ConfigNodeSerializationContext& getConfigNodeContext() const { return configNodeContext; }
+		const EntitySerializationContext& getConfigNodeContext() const { return configNodeContext; }
 		World& getWorld() const { return *world; }
 		EntityId getEntityIdFromUUID(const UUID& uuid) const;
 
@@ -114,7 +119,7 @@ namespace Halley {
 		void setWorldPartition(uint8_t partition);
 
 	private:
-		ConfigNodeSerializationContext configNodeContext;
+		EntitySerializationContext configNodeContext;
 		std::shared_ptr<const Prefab> prefab;
 		World* world;
 		EntityScene* scene;

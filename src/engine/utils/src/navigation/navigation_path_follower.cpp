@@ -63,6 +63,9 @@ void NavigationPathFollower::update(Vector2f curPos, int curSubWorld, const Navm
 	if (needsToReEvaluatePath) {
 		reEvaluatePath(navmeshSet);
 	}
+	if (!path) {
+		return;
+	}
 
 	if (nextPathIdx >= path->path.size()) {
 		goToNextRegion(navmeshSet);
@@ -152,12 +155,12 @@ bool NavigationPathFollower::isDone() const
 	return !path;
 }
 
-ConfigNode ConfigNodeSerializer<NavigationPathFollower>::serialize(const NavigationPathFollower& follower, const ConfigNodeSerializationContext& context)
+ConfigNode ConfigNodeSerializer<NavigationPathFollower>::serialize(const NavigationPathFollower& follower, const EntitySerializationContext& context)
 {
 	return follower.toConfigNode();
 }
 
-NavigationPathFollower ConfigNodeSerializer<NavigationPathFollower>::deserialize(const ConfigNodeSerializationContext& context,	const ConfigNode& node)
+NavigationPathFollower ConfigNodeSerializer<NavigationPathFollower>::deserialize(const EntitySerializationContext& context,	const ConfigNode& node)
 {
 	return NavigationPathFollower(node);
 }

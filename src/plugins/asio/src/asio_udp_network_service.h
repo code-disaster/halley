@@ -15,36 +15,48 @@ namespace asio = boost::asio;
 
 namespace Halley
 {
-	class AsioUDPNetworkService : public NetworkService
+	class AsioUDPNetworkService : public NetworkServiceWithStats
 	{
 	public:
 		AsioUDPNetworkService(int port, IPVersion version = IPVersion::IPv4);
 		~AsioUDPNetworkService();
 
-		void update() override;
+		void update(Time t) override;
 
-		void setAcceptingConnections(bool accepting) override;
-		std::shared_ptr<IConnection> tryAcceptConnection() override;
-		std::shared_ptr<IConnection> connect(String address, int port) override;
+		String startListening(AcceptCallback callback) override;
+		void stopListening() override;
+		std::shared_ptr<IConnection> connect(const String& address) override;
 
 	private:
-		bool acceptingConnections = false;
+		class UDPAcceptor : public Acceptor {
+		public:
+			UDPAcceptor(AsioUDPNetworkService& service, UDPEndpoint endPoint);
+			std::shared_ptr<IConnection> doAccept() override;
+			void doReject() override;
+
+		private:
+			AsioUDPNetworkService& service;
+			UDPEndpoint endPoint;
+		};
+		
+		AcceptCallback acceptCallback;
 		bool startedListening = false;
 
 		asio::io_service service;
 		UDPEndpoint localEndpoint;
 		UDPEndpoint remoteEndpoint;
 		asio::ip::udp::socket socket;
-		std::list<UDPEndpoint> pendingIncomingConnections;
 		HashMap<short, std::shared_ptr<AsioUDPConnection>> activeConnections;
 
 		std::array<gsl::byte, 2048> receiveBuffer;
 
-		void startListening();
 		void receiveNext();
 		void receivePacket(gsl::span<gsl::byte> data, std::string* error);
 		bool isValidConnectionRequest(gsl::span<const gsl::byte> data);
 		short getFreeId() const;
+
+		std::shared_ptr<AsioUDPConnection> acceptConnection(UDPEndpoint endPoint);
+		void rejectConnection();
 	};
 
 }
