@@ -4,11 +4,13 @@
 
 #include "stats_view.h"
 #include "halley/core/api/core_api.h"
+#include "halley/net/connection/ack_unreliable_connection_stats.h"
 #include "halley/support/profiler.h"
 
 namespace Halley
 {
-	class IConnectionStatsListener;
+	class NetworkSession;
+	class INetworkServiceStatsListener;
 	class System;
 
 	class PerformanceStatsView : public StatsView, public CoreAPI::IProfileCallback
@@ -21,8 +23,9 @@ namespace Halley
 		void paint(Painter& painter) override;
 
 		void onProfileData(std::shared_ptr<ProfilerData> data) override;
-		void setNetworkStats(IConnectionStatsListener* networkStats);
+		void setNetworkStats(NetworkSession& networkSession);
 
+		int getNumPages() const;
 		int getPage() const;
 		void setPage(int page);
 
@@ -61,13 +64,14 @@ namespace Halley
 		TextRenderer headerText;
 		TextRenderer fpsLabel;
 		TextRenderer graphLabel;
-		std::vector<TextRenderer> systemLabels;
+		TextRenderer connLabel;
+		Vector<TextRenderer> systemLabels;
 
 		AveragingLatched<int64_t> totalFrameTime;
 		AveragingLatched<int64_t> vsyncTime;
 		AveragingLatched<int64_t> audioTime;
 		
-		std::vector<FrameData> frameData;
+		Vector<FrameData> frameData;
 		size_t lastFrameData = 0;
 		HashMap<String, EventHistoryData> eventHistory;
 		std::shared_ptr<ProfilerData> lastProfileData;
@@ -75,11 +79,12 @@ namespace Halley
 		bool capturing = true;
 		int page = 0;
 
-		IConnectionStatsListener* networkStats = nullptr;
+		INetworkServiceStatsListener* networkStats = nullptr;
+		const NetworkSession* networkSession;
 
 		const Sprite boxBg;
 		const Sprite whitebox;
-		
+
 
 		void drawHeader(Painter& painter, bool simple);
 		void drawTimeline(Painter& painter, Rect4f rect);
@@ -87,8 +92,10 @@ namespace Halley
 		void drawTimeGraphThreads(Painter& painter, Rect4f rect, Range<ProfilerData::TimePoint> timeRange);
 		void drawTimeGraphThread(Painter& painter, Rect4f rect, const ProfilerData::ThreadInfo& threadInfo, Range<ProfilerData::TimePoint> timeRange);
 		void drawTopSystems(Painter& painter, Rect4f rect);
+		void drawNetworkStats(Painter& painter, Rect4f rect);
 		
 		Colour4f getEventColour(ProfilerEventType event) const;
+		Colour4f getNetworkStatsCol(const AckUnreliableConnectionStats::PacketStats& stats) const;
 
 		int64_t getTimeNs(TimeLine timeline, const ProfilerData& data);
 	};

@@ -3,22 +3,28 @@
 #include <memory>
 #include "halley/file_formats/config_file.h"
 #include "halley/support/exception.h"
+#include "halley/time/halleytime.h"
 
 namespace Halley {
+	class UUID;
 	class EntityFactoryContext;
     class Resources;
 	class ConfigNode;
 
 	namespace EntitySerialization {
-        enum class Type {
-        	Undefined = 0,
-        	Prefab = 1,
-	        SaveData = 2
+        enum class Type : uint8_t {
+        	Undefined,
+        	Prefab,
+	        SaveData,
+        	Network,
         };
 
 		inline int makeMask(Type t)
 		{
-			return static_cast<int>(t);
+			if (t == Type::Undefined) {
+				return 0;
+			}
+			return 1 << (static_cast<int>(t) - 1);
 		}
 		
 		template <typename T, typename ... Ts>
@@ -27,11 +33,46 @@ namespace Halley {
 			return static_cast<int>(v) | makeMask(vs...);
 		}
 	}
+
+	template <>
+	struct EnumNames<EntitySerialization::Type> {
+		constexpr std::array<const char*, 4> operator()() const {
+			return{{
+				"Undefined",
+				"Prefab",
+				"SaveData",
+				"Network"
+			}};
+		}
+	};
+
+	class EntitySerializationContext;
+	
+	class IDataInterpolator {
+	public:
+		virtual ~IDataInterpolator() = default;
+
+		virtual void setEnabled(bool enabled) {}
+		virtual bool isEnabled() const { return true; }
+
+		virtual void update(Time t) {}
+		
+		virtual void deserialize(void* value, const void* defaultValue, const EntitySerializationContext& context, const ConfigNode& node) = 0;
+		virtual std::optional<ConfigNode> prepareFieldForSerialization(const ConfigNode& fromValue, const ConfigNode& toValue) { return {}; } // Return nullopt if "toValue" is good to go
+	};
+
+	class IDataInterpolatorSetRetriever {
+	public:
+		virtual ~IDataInterpolatorSetRetriever() = default;
+		virtual IDataInterpolator* tryGetInterpolator(const EntitySerializationContext& context, std::string_view componentName, std::string_view fieldName) const = 0;
+		virtual ConfigNode createComponentDelta(const UUID& instanceUUID, const String& componentName, const ConfigNode& from, const ConfigNode& to) const = 0;
+	};
 	
 	class EntitySerializationContext {
 	public:
 		Resources* resources = nullptr;
 		const EntityFactoryContext* entityContext = nullptr;
+		const IDataInterpolatorSetRetriever* interpolators = nullptr;
 		int entitySerializationTypeMask = EntitySerialization::makeMask(EntitySerialization::Type::Prefab, EntitySerialization::Type::SaveData);
 
 		[[nodiscard]] bool matchType(int typeMask) const

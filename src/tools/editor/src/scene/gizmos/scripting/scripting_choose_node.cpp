@@ -2,8 +2,8 @@
 
 using namespace Halley;
 
-ScriptingChooseNode::ScriptingChooseNode(UIFactory& factory, Resources& resources, std::shared_ptr<ScriptNodeTypeCollection> scriptNodeTypes, const Callback& callback)
-	: ChooseAssetWindow(factory, callback, false, UISizerType::Grid, 4)
+ScriptingChooseNode::ScriptingChooseNode(Vector2f minSize, UIFactory& factory, Resources& resources, std::shared_ptr<ScriptNodeTypeCollection> scriptNodeTypes, const Callback& callback)
+	: ChooseAssetWindow(minSize, factory, callback, false)
 	, resources(resources)
 	, scriptNodeTypes(scriptNodeTypes)
 {
@@ -35,7 +35,7 @@ std::shared_ptr<UIImage> ScriptingChooseNode::makeIcon(const String& id, bool ha
 	}
 }
 
-void ScriptingChooseNode::sortItems(std::vector<std::pair<String, String>>& items)
+void ScriptingChooseNode::sortItems(Vector<std::pair<String, String>>& items)
 {
 	std::sort(items.begin(), items.end(), [&] (const auto& a, const auto& b)
 	{
@@ -48,4 +48,9 @@ void ScriptingChooseNode::sortItems(std::vector<std::pair<String, String>>& item
 		}
 		return a.second < b.second;
 	});
+}
+
+int ScriptingChooseNode::getNumColumns(Vector2f scrollPaneSize) const
+{
+	return 4;
 }

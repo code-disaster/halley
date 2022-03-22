@@ -206,7 +206,7 @@ bool ScriptingGizmo::isHighlighted() const
 	return !!nodeUnderMouse || curEntityTarget.isValid() || nodeEditingConnection;
 }
 
-std::vector<String> ScriptingGizmo::getHighlightedComponents() const
+Vector<String> ScriptingGizmo::getHighlightedComponents() const
 {
 	return { "Script" };
 }
@@ -237,7 +237,7 @@ void ScriptingGizmo::saveEntityData()
 	ConfigNode scriptGraphData;
 	if (scriptGraph) {
 		const auto context = sceneEditorWindow.getEntityFactory()->makeStandaloneContext();
-		scriptGraphData = scriptGraph->toConfigNode(context->getConfigNodeContext());
+		scriptGraphData = scriptGraph->toConfigNode(context->getEntitySerializationContext());
 	}
 	
 	auto* data = getComponentData("Script");
@@ -356,7 +356,7 @@ void ScriptingGizmo::addNode()
 {
 	const Vector2f pos = lastMousePos ? lastMousePos.value() - basePos : Vector2f();
 	
-	auto chooseAssetWindow = std::make_shared<ScriptingChooseNode>(factory, *resources, scriptNodeTypes, [=] (std::optional<String> result)
+	auto chooseAssetWindow = std::make_shared<ScriptingChooseNode>(Vector2f(), factory, *resources, scriptNodeTypes, [=] (std::optional<String> result)
 	{
 		if (result) {
 			Concurrent::execute(pendingUITasks, [this, type = std::move(result.value()), pos] ()

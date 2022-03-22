@@ -6,6 +6,7 @@
 #include <array>
 
 namespace Halley {
+	class ConfigNode;
 	class Deserializer;
 	class Serializer;
 
@@ -16,12 +17,14 @@ namespace Halley {
         explicit UUID(gsl::span<const gsl::byte> bytes);
 		explicit UUID(const Bytes& bytes);
         explicit UUID(const String& str);
+        explicit UUID(const ConfigNode& node);
 
         bool operator==(const UUID& other) const;
         bool operator!=(const UUID& other) const;
 		bool operator<(const UUID& other) const;
 
 		String toString() const;
+        ConfigNode toConfigNode() const;
 
         static UUID generate();
         static UUID generateFromUUIDs(const UUID& one, const UUID& two);
@@ -35,8 +38,11 @@ namespace Halley {
 		void deserialize(Deserializer& s);
 
     private:
-        std::array<uint64_t, 2> bytes;
-    };
+        union {
+            std::array<uint64_t, 2> qwords;
+            std::array<uint8_t, 16> bytes;
+        };
+	};
 }
 
 template<>

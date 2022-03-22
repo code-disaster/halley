@@ -3,6 +3,7 @@
 #include <halley/text/halleystring.h>
 #include "iconnection.h"
 #include "halley/time/halleytime.h"
+#include "halley/text/string_converter.h"
 
 namespace Halley
 {
@@ -12,9 +13,28 @@ namespace Halley
 		IPv6
 	};
 
-	class NetworkService : public IConnectionStatsListener
+	class INetworkServiceStatsListener {
+	public:
+		virtual ~INetworkServiceStatsListener() = default;
+		virtual void onSendData(size_t size, size_t nPackets) = 0;
+		virtual void onReceiveData(size_t size, size_t nPackets) = 0;
+
+		virtual size_t getSentDataPerSecond() const = 0;
+		virtual size_t getReceivedDataPerSecond() const = 0;
+		virtual size_t getSentPacketsPerSecond() const = 0;
+		virtual size_t getReceivedPacketsPerSecond() const = 0;
+	};
+
+	class NetworkService : public INetworkServiceStatsListener
 	{
 	public:
+		enum class Quality {
+			Best,
+			Average,
+			Bad,
+			VeryBad
+		};
+		
 		class Acceptor {
 		public:
 			virtual ~Acceptor() = default;
@@ -39,6 +59,20 @@ namespace Halley
 		virtual String startListening(AcceptCallback callback) = 0; // Returns the address that clients will use to connect to
         virtual void stopListening() = 0;
 		virtual std::shared_ptr<IConnection> connect(const String& address) = 0;
+
+		virtual void setSimulateQualityLevel(Quality quality) {}
+	};
+
+	template <>
+	struct EnumNames<NetworkService::Quality> {
+		constexpr std::array<const char*, 4> operator()() const {
+			return{{
+				"best",
+				"average",
+				"bad",
+				"veryBad"
+			}};
+		}
 	};
 
 	class NetworkServiceWithStats : public NetworkService {
@@ -61,6 +95,7 @@ namespace Halley
 		size_t receivedPackets = 0;
 
 		virtual void onUpdateStats();
+		virtual Time getStatUpdateInterval() const;
 
 	private:
 		Time statsTime = 0.0;

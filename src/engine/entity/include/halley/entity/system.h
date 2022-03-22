@@ -10,6 +10,7 @@
 #include "entity.h"
 #include "halley/utils/type_traits.h"
 #include "system_message.h"
+#include "halley/bytes/byte_serializer.h"
 
 namespace Halley {
 	class Message;
@@ -18,22 +19,13 @@ namespace Halley {
 
 	template <typename T, std::size_t size = gsl::dynamic_extent> using Span = gsl::span<T, size>;
 
-	// True if T::init() exists
-	template <class, class = Halley::void_t<>> struct HasInitMember : std::false_type {};
-	template <class T> struct HasInitMember<T, decltype(std::declval<T&>().init())> : std::true_type { };
-
-	// True if T::onEntityAdded(F&) exists
-	template <class, class, class = Halley::void_t<>> struct HasOnEntitiesAdded : std::false_type {};
-	template <class T, class F> struct HasOnEntitiesAdded<T, F, decltype(std::declval<T>().onEntitiesAdded(std::declval<Span<F>>()))> : std::true_type { };
+	namespace Detail {
+		template<class T> using InitMember = decltype(std::declval<T&>().init());
+		template<class T, typename F> using OnEntitiesAddedMember = decltype(std::declval<T>().onEntitiesAdded(std::declval<Span<F>>()));
+		template<class T, typename F> using OnEntitiesRemovedMember = decltype(std::declval<T>().onEntitiesRemoved(std::declval<Span<F>>()));
+		template<class T, typename F> using OnEntitiesReloadedMember = decltype(std::declval<T>().onEntitiesReloaded(std::declval<Span<F*>>()));
+	}
 	
-	// True if T::onEntityRemoved(F&) exists
-	template <class, class, class = Halley::void_t<>> struct HasOnEntitiesRemoved : std::false_type {};
-	template <class T, class F> struct HasOnEntitiesRemoved<T, F, decltype(std::declval<T>().onEntitiesRemoved(std::declval<Span<F>>()))> : std::true_type { };
-
-	// True if T::onEntityModified() exists
-	template <class, class, class = Halley::void_t<>> struct HasOnEntitiesReloaded : std::false_type {};
-	template <class T, class F> struct HasOnEntitiesReloaded<T, F, decltype(std::declval<T>().onEntitiesReloaded(std::declval<Span<F*>>()))> : std::true_type {};
-
 	class SystemMessageBridge {
 	public:
 		SystemMessageBridge() = default;
@@ -41,6 +33,7 @@ namespace Halley {
 
 		bool isValid() const;
 		void sendMessageToEntity(EntityId target, int msgId, gsl::span<const gsl::byte> data);
+		void sendMessageToSystem(const String& targetSystem, int messageType, gsl::span<const std::byte> data, SystemMessageCallback callback);
 
 	private:
 		System* system = nullptr;
@@ -65,7 +58,8 @@ namespace Halley {
 		void processSystemMessages();
 		size_t getSystemMessagesInInbox() const;
 
-		void sendRawMessage(EntityId target, int msgId, gsl::span<const std::byte> data);
+		void sendEntityMessageFromNetwork(EntityId target, int msgId, gsl::span<const std::byte> data);
+		void sendSystemMessageFromNetwork(const String& targetSystem, int msgId, gsl::span<const std::byte> data, SystemMessageCallback callback);
 
 	protected:
 		const HalleyAPI& doGetAPI() const { return *api; }
@@ -77,8 +71,11 @@ namespace Halley {
 		virtual void deInit() {}
 		virtual void updateBase(Time) {}
 		virtual void renderBase(RenderContext&) {}
-		virtual void onMessagesReceived(int, Message**, size_t*, size_t) {}
-		virtual void onSystemMessageReceived(int messageId, SystemMessage& msg, const std::function<void(std::byte*)>& callback) {}
+
+		virtual void processMessages();
+		void doProcessMessages(FamilyBindingBase& family, gsl::span<const int> typesAccepted);
+		virtual void onMessagesReceived(int, Message**, size_t*, size_t, FamilyBindingBase&) {}
+		virtual void onSystemMessageReceived(const SystemMessageContext& context) {}
 
 		template <typename F, typename V>
 		static void invokeIndividual(F&& f, V& fam)
@@ -104,42 +101,41 @@ namespace Halley {
 			doSendMessage(entityId, std::move(toSend), T::messageIndex);
 		}
 
-		template <typename T, typename R, typename F>
+		template <typename T, typename F>
 		size_t sendSystemMessageGeneric(T msg, F returnLambda, const String& targetSystem)
 		{
 			SystemMessageContext context;
 
 			context.msgId = T::messageIndex;
+			context.remote = false;
 			context.msg = std::make_unique<T>(std::move(msg));
-			context.callback = [=, returnLambda = std::move(returnLambda)] (std::byte* data)
-			{
-				returnLambda(std::move(*reinterpret_cast<R*>(data)));
-			};
-			
-			return doSendSystemMessage(std::move(context), targetSystem);
-		}
 
-		template <typename T, typename F>
-		size_t sendSystemMessageGenericVoid(T msg, F returnLambda, const String& targetSystem)
-		{
-			SystemMessageContext context;
-
-			context.msgId = T::messageIndex;
-			context.msg = std::make_unique<T>(std::move(msg));
-			context.callback = [=, returnLambda = std::move(returnLambda)] (std::byte*)
-			{
-				if (returnLambda) {
-					returnLambda();
-				}
-			};
+			if (returnLambda) {
+				context.callback = [=, returnLambda = std::move(returnLambda)] (std::byte* data, Bytes serializedData) {
+					Expects((data != nullptr) ^ (!serializedData.empty())); // Exactly one must contain data
+					
+					if constexpr (std::is_same_v<typename T::ReturnType, void>) {
+						static_cast<void>(data);
+						static_cast<void>(serializedData);
+						returnLambda();
+					} else {
+						if (data) {
+							returnLambda(std::move(*reinterpret_cast<typename T::ReturnType*>(data)));
+						} else {
+							auto options = SerializerOptions(SerializerOptions::maxVersion);
+							returnLambda(Deserializer::fromBytes<typename T::ReturnType>(serializedData, std::move(options)));
+						}
+					}
+				};
+			}
 			
-			return doSendSystemMessage(std::move(context), targetSystem);
+			return doSendSystemMessage(std::move(context), targetSystem, T::messageDestination);
 		}
 
 		template <typename T>
 		void invokeInit(T* system)
 		{
-			if constexpr (HasInitMember<T>::value) {
+			if constexpr (is_detected_v<Detail::InitMember, T>) {
 				system->init();
 			}
 		}
@@ -147,7 +143,7 @@ namespace Halley {
 		template <typename T, typename F>
 		void initialiseOnEntityAdded(FamilyBinding<F>& binding, T* system)
 		{
-			if constexpr (HasOnEntitiesAdded<T, F>::value) {
+			if constexpr (is_detected_v<Detail::OnEntitiesAddedMember, T, F>) {
 				binding.setOnEntitiesAdded([system] (void* es, size_t count)
 				{
 					system->onEntitiesAdded(Span<F>(static_cast<F*>(es), count));
@@ -158,7 +154,7 @@ namespace Halley {
 		template <typename T, typename F>
 		void initialiseOnEntityRemoved(FamilyBinding<F>& binding, T* system)
 		{
-			if constexpr (HasOnEntitiesRemoved<T, F>::value) {
+			if constexpr (is_detected_v<Detail::OnEntitiesRemovedMember, T, F>) {
 				binding.setOnEntitiesRemoved([system] (void* es, size_t count)
 				{
 					system->onEntitiesRemoved(Span<F>(static_cast<F*>(es), count));
@@ -169,7 +165,7 @@ namespace Halley {
 		template <typename T, typename F>
 		void initializeOnEntityReloaded(FamilyBinding<F>& binding, T* system)
 		{
-			if constexpr (HasOnEntitiesReloaded<T, F>::value) {
+			if constexpr (is_detected_v<Detail::OnEntitiesReloadedMember, T, F>) {
 				binding.setOnEntitiesReloaded([system](void* es, size_t count)
 				{
 					system->onEntitiesReloaded(Span<F*>(static_cast<F**>(es), count));
@@ -207,9 +203,8 @@ namespace Halley {
 		void onAddedToWorld(World& world, int id);
 
 		void purgeMessages();
-		void processMessages();
 		void doSendMessage(EntityId target, std::unique_ptr<Message> msg, int msgId);
-		size_t doSendSystemMessage(SystemMessageContext context, const String& targetSystem);
+		size_t doSendSystemMessage(SystemMessageContext context, const String& targetSystem, SystemMessageDestination destination);
 		void dispatchMessages();
 	};
 

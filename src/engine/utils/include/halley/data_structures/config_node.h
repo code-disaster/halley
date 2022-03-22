@@ -8,7 +8,7 @@
 #include "halley/maths/vector4.h"
 #include "halley/data_structures/maybe.h"
 #include <map>
-#include <vector>
+#include "halley/data_structures/vector.h"
 
 #include "hash_map.h"
 #include "halley/utils/type_traits.h"
@@ -95,8 +95,11 @@ namespace Halley {
 		friend class ConfigFile;
 
 	public:
-		using MapType = std::map<String, ConfigNode, std::less<>>;
-		using SequenceType = std::vector<ConfigNode>;
+		template <typename T>
+		class Tag {};
+
+		using MapType = HashMap<String, ConfigNode>;
+		using SequenceType = Vector<ConfigNode>;
 
 		struct NoopType {};
 		struct DelType {};
@@ -129,7 +132,7 @@ namespace Halley {
 		explicit ConfigNode(IdxType value);
 
 		template <typename T>
-		explicit ConfigNode(const std::vector<T>& sequence)
+		explicit ConfigNode(const Vector<T>& sequence)
 		{
 			*this = sequence;
 		}
@@ -168,7 +171,7 @@ namespace Halley {
 		ConfigNode& operator=(IdxType value);
 
 		template <typename T>
-		ConfigNode& operator=(const std::vector<T>& sequence)
+		ConfigNode& operator=(const Vector<T>& sequence)
 		{
 			SequenceType seq;
 			seq.reserve(sequence.size());
@@ -247,10 +250,10 @@ namespace Halley {
 		Vector4f asVector4f(Vector4f defaultValue) const;
 
 		template <typename T>
-		std::vector<T> asVector() const
+		Vector<T> asVector() const
 		{
 			if (type == ConfigNodeType::Sequence) {
-				std::vector<T> result;
+				Vector<T> result;
 				result.reserve(asSequence().size());
 				for (const auto& e : asSequence()) {
 					if constexpr (HasConfigNodeConstructor<T>::value) {
@@ -263,12 +266,12 @@ namespace Halley {
 			} else if (type == ConfigNodeType::Undefined) {
 				return {};
 			} else {
-				throw Exception("Can't convert " + getNodeDebugId() + " from " + toString(getType()) + " to std::vector<T>.", HalleyExceptions::Resources);
+				throw Exception("Can't convert " + getNodeDebugId() + " from " + toString(getType()) + " to Vector<T>.", HalleyExceptions::Resources);
 			}
 		}
 
 		template <typename T>
-		std::vector<T> asVector(const std::vector<T>& defaultValue) const
+		Vector<T> asVector(const Vector<T>& defaultValue) const
 		{
 			if (type == ConfigNodeType::Sequence) {
 				return asVector<T>();
@@ -401,9 +404,6 @@ namespace Halley {
 		void decayDeltaArtifacts();
 
 	private:
-		template <typename T>
-		class Tag {};
-
 		union {
 			String* strData;
 			MapType* mapData;
@@ -456,7 +456,7 @@ namespace Halley {
 		const Bytes& convertTo(Tag<Bytes&> tag) const;
 
 		template <typename T>
-		std::vector<T> convertTo(Tag<std::vector<T>> tag) const
+		Vector<T> convertTo(Tag<Vector<T>> tag) const
 		{
 			return asVector<T>();
 		}

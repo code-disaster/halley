@@ -34,7 +34,9 @@ namespace Halley {
 		class IEntityNetworkSessionListener {
 		public:
 			virtual ~IEntityNetworkSessionListener() = default;
+			virtual void onStartSession(NetworkSession::PeerId myPeerId) = 0;
 			virtual void onRemoteEntityCreated(EntityRef entity, NetworkSession::PeerId peerId) {}
+			virtual void setupInterpolators(DataInterpolatorSet& interpolatorSet, EntityRef entity, bool remote) = 0;
 			virtual void onPreSendDelta(EntityDataDelta& delta) {}
 			virtual bool isEntityInView(EntityRef entity, const EntityClientSharedData& clientData) = 0;
 		};
@@ -55,20 +57,28 @@ namespace Halley {
 		const EntityFactory::SerializationOptions& getEntitySerializationOptions() const;
 		const EntityDataDelta::Options& getEntityDeltaOptions() const;
 		const SerializerOptions& getByteSerializationOptions() const;
+		SerializationDictionary& getSerializationDictionary();
 
 		Time getMinSendInterval() const;
 
 		void onRemoteEntityCreated(EntityRef entity, NetworkSession::PeerId peerId);
 		void onPreSendDelta(EntityDataDelta& delta);
+		void requestSetupInterpolators(DataInterpolatorSet& interpolatorSet, EntityRef entity, bool remote);
+		void setupOutboundInterpolators(EntityRef entity);
 
 		bool isReadyToStart() const;
 		bool isEntityInView(EntityRef entity, const EntityClientSharedData& clientData) const;
 
-		std::vector<Rect4i> getRemoteViewPorts() const;
+		Vector<Rect4i> getRemoteViewPorts() const;
 
-		bool isRemote(EntityRef entity) const override;
-		void sendEntityMessage(EntityRef entity, int messageId, Bytes messageData) override;
-	
+		bool isHost() override;
+		bool isRemote(ConstEntityRef entity) const override;
+		void sendEntityMessage(EntityRef entity, int messageType, Bytes messageData) override;
+		void sendSystemMessage(String targetSystem, int messageType, Bytes messageData, SystemMessageDestination destination, SystemMessageCallback callback) override;
+
+		void sendToAll(EntityNetworkMessage msg);
+		void sendToPeer(EntityNetworkMessage msg, NetworkSession::PeerId peerId);
+
 	protected:
 		void onStartSession(NetworkSession::PeerId myPeerId) override;
 		void onPeerConnected(NetworkSession::PeerId peerId) override;
@@ -77,16 +87,21 @@ namespace Halley {
 		std::unique_ptr<SharedData> makePeerSharedData() override;
 	
 	private:
-		struct QueuedPacket {
+		struct QueuedMessage {
 			NetworkSession::PeerId fromPeerId;
-			EntityNetworkHeaderType type;
-			InboundNetworkPacket packet;
+			EntityNetworkMessage message;
+		};
+
+		struct PendingSysMsgResponse {
+			SystemMessageCallback callback;
 		};
 		
 		Resources& resources;
 		std::shared_ptr<EntityFactory> factory;
 		IEntityNetworkSessionListener* listener = nullptr;
 		SystemMessageBridge messageBridge;
+		uint32_t systemMessageId = 0;
+		HashMap<uint32_t, PendingSysMsgResponse>  pendingSysMsgResponses;
 		
 		EntityFactory::SerializationOptions entitySerializationOptions;
 		EntityDataDelta::Options deltaOptions;
@@ -94,18 +109,24 @@ namespace Halley {
 		SerializationDictionary serializationDictionary;
 
 		std::shared_ptr<NetworkSession> session;
-		std::vector<EntityNetworkRemotePeer> peers;
+		Vector<EntityNetworkRemotePeer> peers;
 
-		std::vector<QueuedPacket> queuedPackets;
+		Vector<QueuedMessage> queuedPackets;
+
+		HashMap<int, Vector<EntityNetworkMessage>> outbox;
 
 		bool readyToStart = false;
 
-		bool canProcessMessage(EntityNetworkHeaderType type);
-		void processMessage(NetworkSession::PeerId fromPeerId, EntityNetworkHeaderType type, InboundNetworkPacket packet);
-		void onReceiveEntityUpdate(NetworkSession::PeerId fromPeerId, EntityNetworkHeaderType type, InboundNetworkPacket packet);
-		void onReceiveReady(NetworkSession::PeerId fromPeerId);
-		void onReceiveMessageToEntity(NetworkSession::PeerId fromPeerId, InboundNetworkPacket packet);
+		bool canProcessMessage(const EntityNetworkMessage& msg) const;
+		void processMessage(NetworkSession::PeerId fromPeerId, EntityNetworkMessage msg);
+		void onReceiveEntityUpdate(NetworkSession::PeerId fromPeerId, EntityNetworkMessage msg);
+		void onReceiveReady(NetworkSession::PeerId fromPeerId, const EntityNetworkMessageReadyToStart& msg);
+		void onReceiveMessageToEntity(NetworkSession::PeerId fromPeerId, const EntityNetworkMessageEntityMsg& msg);
+		void onReceiveSystemMessage(NetworkSession::PeerId fromPeerId, const EntityNetworkMessageSystemMsg& msg);
+		void onReceiveSystemMessageResponse(NetworkSession::PeerId fromPeerId, const EntityNetworkMessageSystemMsgResponse& msg);
 
+		void sendMessages();
+		
 		void setupDictionary();
 	};
 }

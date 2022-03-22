@@ -322,7 +322,7 @@ public:
 		container->add(context.makeField("bool", pars.withSubKey("visible", "true"), ComponentEditorLabelCreation::Never));
 		auto containerWeak = std::weak_ptr<UIWidget>(container);
 
-		auto prevMaterialParameters = std::make_shared<std::vector<std::shared_ptr<IUIElement>>>();
+		auto prevMaterialParameters = std::make_shared<Vector<std::shared_ptr<IUIElement>>>();
 		auto addMaterialParameters = [&context, containerWeak, prevMaterialParameters, pars](const String& materialName)
 		{
 			const auto& data = pars.data;
@@ -377,7 +377,7 @@ public:
 							const auto materialName = context.getGameResources().get<SpriteResource>(newVal)->getDefaultMaterialName();
 
 							// Important: run this on main thread. Otherwise, this call will result in addTextures being called again, invalidating this method halfway through its execution.
-							Concurrent::execute(Executors::getMainThread(), [materialName, material]() {
+							Concurrent::execute(Executors::getMainUpdateThread(), [materialName, material]() {
 								material->setValue(materialName);
 							});
 						}
@@ -456,6 +456,65 @@ public:
 	}
 };
 
+class ComponentEditorTextRendererFieldFactory : public IComponentEditorFieldFactory {
+public:
+	String getFieldType() override
+	{
+		return "Halley::TextRenderer";
+	}
+
+	bool isNested() const override
+	{
+		return true;
+	}
+
+	ConfigNode getDefaultNode() const override
+	{
+		return ConfigNode(ConfigNode::MapType());
+	}
+
+	std::shared_ptr<IUIElement> createField(const ComponentEditorContext& context, const ComponentFieldParameters& pars) override
+	{
+		const auto& data = pars.data;
+
+		auto& fieldData = data.getWriteableFieldData(); // HACK
+		fieldData.ensureType(ConfigNodeType::Map);
+
+		auto fontWidget = std::make_shared<SelectAssetWidget>("font", context.getUIFactory(), AssetType::Font, context.getGameResources(), context.getProjectWindow());
+		fontWidget->setDefaultAssetId("Ubuntu Bold");
+		
+		auto container = std::make_shared<UIWidget>(data.getName(), Vector2f(), UISizer(UISizerType::Grid, 4.0f, 2));
+		container->getSizer().setColumnProportions({{0, 1}});
+		container->add(context.makeLabel("Text"));
+		container->add(context.makeField("Halley::String", pars.withSubKey("text", ""), ComponentEditorLabelCreation::Never));
+		container->add(context.makeLabel("Font"));
+		container->add(fontWidget);
+		container->add(context.makeLabel("Size"));
+		container->add(context.makeField("float", pars.withSubKey("size", "20"), ComponentEditorLabelCreation::Never));
+		container->add(context.makeLabel("Outline"));
+		container->add(context.makeField("float", pars.withSubKey("outline", "0"), ComponentEditorLabelCreation::Never));
+		container->add(context.makeLabel("Colour"));
+		container->add(context.makeField("Halley::Colour4f", pars.withSubKey("colour", "#000000"), ComponentEditorLabelCreation::Never));
+		container->add(context.makeLabel("Outline Colour"));
+		container->add(context.makeField("Halley::Colour4f", pars.withSubKey("outlineColour", "#000000"), ComponentEditorLabelCreation::Never));
+		container->add(context.makeLabel("Alignment"));
+		container->add(context.makeField("float", pars.withSubKey("alignment", "0"), ComponentEditorLabelCreation::Never));
+		container->add(context.makeLabel("Offset"));
+		container->add(context.makeField("Halley::Vector2f", pars.withSubKey("offset"), ComponentEditorLabelCreation::Never));
+		container->add(context.makeLabel("Smoothness"));
+		container->add(context.makeField("float", pars.withSubKey("smoothness"), ComponentEditorLabelCreation::Never));
+		// TODO: clip, pixel offset, colour override, line spacing
+
+		container->bindData("font", fieldData["font"].asString(""), [&context, data](String newVal)
+		{
+			data.getWriteableFieldData()["font"] = ConfigNode(std::move(newVal));
+			context.onEntityUpdated();
+		});
+		
+		return container;
+	}
+};
+
 class ComponentEditorAnimationPlayerFieldFactory : public IComponentEditorFieldFactory {
 public:
 	String getFieldType() override
@@ -505,8 +564,8 @@ public:
 
 		auto updateAnimation = [container, data, &resources] (const String& animName)
 		{
-			std::vector<String> sequences;
-			std::vector<String> directions;
+			Vector<String> sequences;
+			Vector<String> directions;
 
 			auto material = container->getWidgetAs<UITextInput>("material");
 			if (animName.isEmpty()) {
@@ -607,7 +666,7 @@ public:
 		container->add(button, 0);
 
        	container->setHandle(UIEventType::ReloadData, pars.componentName + ":" + data.getName(), [=](const UIEvent& event) {
-			std::vector<Vector2f> newVal;
+			Vector<Vector2f> newVal;
 			if (data.getFieldData().getType() != ConfigNodeType::Undefined) {
 				newVal = data.getFieldData().asVector<Vector2f>();
 			}
@@ -640,7 +699,7 @@ class ComponentEditorStdVectorFieldFactory : public IComponentEditorFieldFactory
 public:
 	String getFieldType() override
 	{
-		return "std::vector<>";
+		return "Halley::Vector<>";
 	}
 
 	bool isNested() const override
@@ -1135,7 +1194,7 @@ public:
 		fillSizer->add(std::move(fillVertical), 0, {}, UISizerAlignFlags::Centre);
 		fillSizer->add(std::make_shared<UIImage>(Sprite().setImage(res, "arrows/arrow_up_down.png")), 0, {}, UISizerAlignFlags::Centre);
 
-		std::vector<String> listIds;
+		Vector<String> listIds;
 		auto alignList = std::make_shared<UIList>("align", context.getUIFactory().getStyle("list"), UISizerType::Grid, 3);
 		auto addDir = [&] (int dir, std::string_view imageName)
 		{
@@ -1241,9 +1300,9 @@ public:
 	}
 };
 
-std::vector<std::unique_ptr<IComponentEditorFieldFactory>> EntityEditorFactories::getDefaultFactories()
+Vector<std::unique_ptr<IComponentEditorFieldFactory>> EntityEditorFactories::getDefaultFactories()
 {
-	std::vector<std::unique_ptr<IComponentEditorFieldFactory>> factories;
+	Vector<std::unique_ptr<IComponentEditorFieldFactory>> factories;
 
 	factories.emplace_back(std::make_unique<ComponentEditorTextFieldFactory>());
 	factories.emplace_back(std::make_unique<ComponentEditorIntFieldFactory>());
@@ -1258,6 +1317,7 @@ std::vector<std::unique_ptr<IComponentEditorFieldFactory>> EntityEditorFactories
 	factories.emplace_back(std::make_unique<ComponentEditorVectorFieldFactory<Vector4i, 4>>("Halley::Vector4i"));
 	factories.emplace_back(std::make_unique<ComponentEditorVertexFieldFactory>());
 	factories.emplace_back(std::make_unique<ComponentEditorSpriteFieldFactory>());
+	factories.emplace_back(std::make_unique<ComponentEditorTextRendererFieldFactory>());
 	factories.emplace_back(std::make_unique<ComponentEditorAnimationPlayerFieldFactory>());
 	factories.emplace_back(std::make_unique<ComponentEditorPolygonFieldFactory>());
 	factories.emplace_back(std::make_unique<ComponentEditorVertexListFieldFactory>());

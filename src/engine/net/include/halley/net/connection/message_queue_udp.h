@@ -2,66 +2,84 @@
 
 #include "network_message.h"
 #include <memory>
-#include <vector>
+#include "halley/data_structures/vector.h"
+#include "ack_unreliable_connection.h"
 #include <map>
-#include "reliable_connection.h"
 #include <list>
 #include <chrono>
 #include "message_queue.h"
+#include <cstdint>
 
 namespace Halley
 {
-	class ReliableConnection;
+	class AckUnreliableConnection;
 
-	class MessageQueueUDP : public MessageQueue, private IReliableConnectionAckListener
+	class MessageQueueUDP : public MessageQueue, private IAckUnreliableConnectionListener
 	{
+		struct Outbound {
+			OutboundNetworkPacket packet;
+			uint16_t seq = 0;
+			uint8_t channel = 0;
+		};
+
+		struct Inbound {
+			InboundNetworkPacket packet;
+			uint16_t seq = 0;
+			uint8_t channel = 0;
+		};
+
 		struct PendingPacket
 		{
-			std::vector<std::unique_ptr<NetworkMessage>> msgs;
+			Vector<Outbound> msgs;
 			std::chrono::steady_clock::time_point timeSent;
-			size_t size;
-			unsigned short seq;
-			bool reliable;
+			size_t size = 0;
+			uint16_t seq = 0;
+			bool reliable = false;
 		};
 
 		struct Channel
 		{
-			std::vector<std::unique_ptr<NetworkMessage>> receiveQueue;
-			std::unique_ptr<NetworkMessage> lastAck;
-			unsigned short lastAckSeq = 0;
-			unsigned short lastSentSeq = 0;
-			unsigned short lastReceivedSeq = 0;
+			Vector<Inbound> receiveQueue;
+			uint16_t lastAckSeq = 0;
+			uint16_t lastSentSeq = 0;
+			uint16_t lastReceivedSeq = 0;
 			ChannelSettings settings;
 			bool initialized = false;
 
-			void getReadyMessages(std::vector<std::unique_ptr<NetworkMessage>>& out);
+			void getReadyMessages(Vector<InboundNetworkPacket>& out);
 		};
 
 	public:
-		MessageQueueUDP(std::shared_ptr<ReliableConnection> connection);
+		MessageQueueUDP(std::shared_ptr<AckUnreliableConnection> connection);
 		~MessageQueueUDP();
 		
-		void setChannel(int channel, ChannelSettings settings) override;
+		void setChannel(uint8_t channel, ChannelSettings settings) override;
 
-		std::vector<std::unique_ptr<NetworkMessage>> receiveAll() override;
+		Vector<InboundNetworkPacket> receivePackets() override;
 
-		void enqueue(std::unique_ptr<NetworkMessage> msg, int channel) override;
+		void enqueue(OutboundNetworkPacket packet, uint8_t channel) override;
 		void sendAll() override;
 
-	private:
-		std::shared_ptr<ReliableConnection> connection;
-		std::vector<Channel> channels;
+		bool isConnected() const override;
+		ConnectionStatus getStatus() const;
+		void close();
 
-		std::list<std::unique_ptr<NetworkMessage>> pendingMsgs;
+		float getLatency() const;
+
+	private:
+		std::shared_ptr<AckUnreliableConnection> connection;
+		Vector<Channel> channels;
+
+		std::list<Outbound> outboundQueued;
 		std::map<int, PendingPacket> pendingPackets;
 		int nextPacketId = 0;
 
 		void onPacketAcked(int tag) override;
-		void checkReSend(std::vector<ReliableSubPacket>& collect);
+		void checkReSend(Vector<AckUnreliableSubPacket>& collect);
 
-		ReliableSubPacket createPacket();
-		ReliableSubPacket makeTaggedPacket(std::vector<std::unique_ptr<NetworkMessage>>& msgs, size_t size, bool resends = false, unsigned short resendSeq = 0);
-		std::vector<gsl::byte> serializeMessages(const std::vector<std::unique_ptr<NetworkMessage>>& msgs, size_t size) const;
+		AckUnreliableSubPacket createPacket();
+		AckUnreliableSubPacket makeTaggedPacket(Vector<Outbound>& msgs, size_t size, bool resends = false, uint16_t resendSeq = 0);
+		Vector<gsl::byte> serializeMessages(const Vector<Outbound>& msgs, size_t size) const;
 
 		void receiveMessages();
 	};

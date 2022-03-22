@@ -15,15 +15,15 @@ namespace Halley {
     public:		
         using Callback = std::function<void(std::optional<String>)>;
 		
-        ChooseAssetWindow(UIFactory& factory, Callback callback, bool canShowBlank = true, UISizerType orientation = UISizerType::Vertical, int nColumns = 1);
+        ChooseAssetWindow(Vector2f minSize, UIFactory& factory, Callback callback, bool canShowBlank = true);
 		virtual ~ChooseAssetWindow();
 
         void onAddedToRoot(UIRoot& root) override;
-		void setAssetIds(std::vector<String> ids, String defaultOption);
-		void setAssetIds(std::vector<String> _ids, std::vector<String> _names, String _defaultOption);
+		void setAssetIds(Vector<String> ids, String defaultOption);
+		void setAssetIds(Vector<String> _ids, Vector<String> _names, String _defaultOption);
 
 		void setTitle(LocalisedString title);
-		void setCategoryFilters(std::vector<AssetCategoryFilter> filters, const String& defaultOption);
+		void setCategoryFilters(Vector<AssetCategoryFilter> filters, const String& defaultOption);
 
     protected:
         bool onKeyPress(KeyboardKeyPress key) override;
@@ -39,22 +39,24 @@ namespace Halley {
 		std::shared_ptr<UISizer> makeItemSizerBigIcon(std::shared_ptr<UIImage> icon, std::shared_ptr<UILabel> label);
 
         virtual void onCategorySet(const String& id);
+		virtual void onOptionSelected(const String& id);
 
-        virtual void sortItems(std::vector<std::pair<String, String>>& items);
-		void sortItemsByName(std::vector<std::pair<String, String>>& items);
-		void sortItemsById(std::vector<std::pair<String, String>>& items);
+        virtual void sortItems(Vector<std::pair<String, String>>& items);
+		void sortItemsByName(Vector<std::pair<String, String>>& items);
+		void sortItemsById(Vector<std::pair<String, String>>& items);
+
+        virtual int getNumColumns(Vector2f scrollPaneSize) const;
 
     private:
         UIFactory& factory;
         Callback callback;
 		UISizerType orientation;
-		int nColumns;
 
-		std::vector<String> origIds;
-		std::vector<String> origNames;
-		std::vector<String> ids;
-		std::vector<String> names;
-		std::vector<AssetCategoryFilter> categoryFilters;
+		Vector<String> origIds;
+		Vector<String> origNames;
+		Vector<String> ids;
+		Vector<String> names;
+		Vector<AssetCategoryFilter> categoryFilters;
 		
 		FuzzyTextMatcher fuzzyMatcher;
 		String filter;

@@ -47,6 +47,8 @@ Serializer& Serializer::operator<<(const String& str)
 					throw Exception("String \"" + str + "\" not found in serialization dictionary, but it's marked as exhaustive.", HalleyExceptions::Utils);
 				}
 
+				options.dictionary->notifyMissingString(str);
+
 				// Not found, store it with bit 0 set to 0
 				const uint64_t sz = uint64_t(str.size());
 				*this << (sz << 1);
@@ -74,22 +76,21 @@ Serializer& Serializer::operator<<(const Path& path)
 
 Serializer& Serializer::operator<<(gsl::span<const gsl::byte> span)
 {
-	if (!dryRun) {
-		memcpy(dst.data() + size, span.data(), span.size_bytes());
-	}
-	size += span.size_bytes();
+	copyBytes(span.data(), span.size_bytes());
+	return *this;
+}
+
+Serializer& Serializer::operator<<(gsl::span<gsl::byte> span)
+{
+	copyBytes(span.data(), span.size_bytes());
 	return *this;
 }
 
 Serializer& Serializer::operator<<(const Bytes& bytes)
 {
-	const uint32_t byteSize = static_cast<uint32_t>(bytes.size());
-	*this << byteSize;
+	*this << static_cast<uint32_t>(bytes.size());
 
-	if (!dryRun) {
-		memcpy(dst.data() + size, bytes.data(), bytes.size());
-	}
-	size += bytes.size();
+	copyBytes(bytes.data(), bytes.size());
 	return *this;
 }
 
@@ -140,6 +141,17 @@ void Serializer::serializeVariableInteger(uint64_t val, std::optional<bool> sign
 	}
 
 	*this << gsl::as_bytes(gsl::span<const uint8_t>(buffer.data(), curPos));
+}
+
+void Serializer::copyBytes(const void* src, size_t srcSize)
+{
+	if (!dryRun) {
+		if (dst.size() - size < srcSize) {
+			throw Exception("Insufficient bytes to serialize data.", HalleyExceptions::Utils);
+		}
+		memcpy(dst.data() + size, src, srcSize);
+	}
+	size += srcSize;
 }
 
 Deserializer::Deserializer(gsl::span<const gsl::byte> src, SerializerOptions options)
@@ -312,7 +324,7 @@ void Deserializer::deserializeVariableInteger(uint64_t& val, bool& sign, bool is
 void Deserializer::ensureSufficientBytesRemaining(size_t bytes)
 {
 	if (bytes > getBytesRemaining()) {
-		throw Exception("Attempt to deserialize out of bounds", HalleyExceptions::File);
+		throw Exception("Attempt to deserialize out of bounds, requested " + toString(bytes) + " bytes, but only have " + toString(getBytesRemaining()) + " bytes left.", HalleyExceptions::File);
 	}
 }
 

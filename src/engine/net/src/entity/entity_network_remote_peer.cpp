@@ -5,6 +5,7 @@
 #include "halley/entity/world.h"
 #include "halley/support/logger.h"
 #include "halley/utils/algorithm.h"
+#include "halley/entity/data_interpolator.h"
 
 class NetworkComponent;
 using namespace Halley;
@@ -22,6 +23,12 @@ NetworkSession::PeerId EntityNetworkRemotePeer::getPeerId() const
 void EntityNetworkRemotePeer::sendEntities(Time t, gsl::span<const std::pair<EntityId, uint8_t>> entityIds, const EntityClientSharedData& clientData)
 {
 	Expects(isAlive());
+
+	if (!isRemoteReady()) {
+		return;
+	}
+
+	timeSinceSend += t;
 	
 	// Mark all as not alive
 	for (auto& e: outboundEntities) {
@@ -37,6 +44,7 @@ void EntityNetworkRemotePeer::sendEntities(Time t, gsl::span<const std::pair<Ent
 		const auto entity = parent->getWorld().getEntity(entityId);
 		if (peerId == 0 || parent->isEntityInView(entity, clientData)) { // Always send to host
 			if (const auto iter = outboundEntities.find(entityId); iter == outboundEntities.end()) {
+				parent->setupOutboundInterpolators(entity);
 				sendCreateEntity(entity);
 			} else {
 				sendUpdateEntity(t, iter->second, entity);
@@ -52,33 +60,34 @@ void EntityNetworkRemotePeer::sendEntities(Time t, gsl::span<const std::pair<Ent
 	}
 	std_ex::erase_if_value(outboundEntities, [](const OutboundEntity& e) { return !e.alive; });
 
+	if (timeSinceSend > maxSendInterval) {
+		sendKeepAlive();
+	}
+	
 	if (!hasSentData) {
 		hasSentData = true;
 		onFirstDataBatchSent();
 	}
 }
 
-void EntityNetworkRemotePeer::receiveEntityPacket(NetworkSession::PeerId fromPeerId, EntityNetworkHeaderType type, InboundNetworkPacket packet)
+void EntityNetworkRemotePeer::receiveNetworkMessage(NetworkSession::PeerId fromPeerId, EntityNetworkMessage msg)
 {
 	Expects(isAlive());
 
-	EntityNetworkEntityHeader header;
-	packet.extractHeader(header);
-	const auto networkEntityId = header.entityId;
-
-	if (type == EntityNetworkHeaderType::Create) {
-		receiveCreateEntity(networkEntityId, packet.getBytes());
-	} else if (type == EntityNetworkHeaderType::Update) {
-		receiveUpdateEntity(networkEntityId, packet.getBytes());
-	} else if (type == EntityNetworkHeaderType::Destroy) {
-		receiveDestroyEntity(networkEntityId);
+	if (msg.getType() == EntityNetworkHeaderType::Create) {
+		receiveCreateEntity(msg.getMessage<EntityNetworkMessageCreate>());
+	} else if (msg.getType() == EntityNetworkHeaderType::Update) {
+		receiveUpdateEntity(msg.getMessage<EntityNetworkMessageUpdate>());
+	} else if (msg.getType() == EntityNetworkHeaderType::Destroy) {
+		receiveDestroyEntity(msg.getMessage<EntityNetworkMessageDestroy>());
 	}
 }
 
 void EntityNetworkRemotePeer::destroy()
 {
 	if (alive) {
-		if (parent->hasWorld()) {
+		// Don't destroy host entities. Host disconnecting means that the session is terminating, and destroying host entities could lead to bugs.
+		if (parent->hasWorld() && peerId != 0) {
 			auto& world = parent->getWorld();
 			for (const auto& [k, v] : inboundEntities) {
 				world.destroyEntity(v.worldId);
@@ -116,13 +125,12 @@ void EntityNetworkRemotePeer::sendCreateEntity(EntityRef entity)
 	result.data = parent->getFactory().serializeEntity(entity, parent->getEntitySerializationOptions());
 
 	auto deltaData = parent->getFactory().entityDataToPrefabDelta(result.data, entity.getPrefab(), parent->getEntityDeltaOptions());
-	auto bytes = Serializer::toBytes(result.data, parent->getByteSerializationOptions());
-	const auto size = send(EntityNetworkHeaderType::Create, result.networkId, std::move(bytes));
+	auto bytes = Serializer::toBytes(deltaData, parent->getByteSerializationOptions());
+	send(EntityNetworkMessageCreate(result.networkId, std::move(bytes)));
 	
 	outboundEntities[entity.getEntityId()] = std::move(result);
-
-	//Logger::logDev("Sending create " + entity.getName() + ": " + toString(size) + " bytes to peer " + toString(static_cast<int>(peerId)));
-	//Logger::logDev("Create:\n" + EntityData(deltaData).toYAML() + "\n");
+	
+	//Logger::logDev("Send Create: " + entity.getName() + " (" + entity.getInstanceUUID() + ") to peer " + toString(static_cast<int>(peerId)) + ":\n" + EntityData(deltaData).toYAML() + "\n");
 }
 
 void EntityNetworkRemotePeer::sendUpdateEntity(Time t, OutboundEntity& remote, EntityRef entity)
@@ -132,23 +140,27 @@ void EntityNetworkRemotePeer::sendUpdateEntity(Time t, OutboundEntity& remote, E
 	if (remote.timeSinceSend < parent->getMinSendInterval()) {
 		return;
 	}
-	
+
+	// Encode delta using interpolators
 	auto newData = parent->getFactory().serializeEntity(entity, parent->getEntitySerializationOptions());
-	auto deltaData = EntityDataDelta(remote.data, newData, parent->getEntityDeltaOptions());
+	auto retriever = DataInterpolatorSetRetriever(entity, true);
+	auto options = parent->getEntityDeltaOptions();
+	options.interpolatorSet = &retriever;
+	auto deltaData = EntityDataDelta(remote.data, newData, options);
 
 	if (deltaData.hasChange()) {
-		parent->onPreSendDelta(deltaData);
+		parent->onPreSendDelta(deltaData); // Can modify deltaData
 	}
 
+	// Check again, since the method above can modify the delta
 	if (deltaData.hasChange()) {
 		remote.data = std::move(newData);
 		remote.timeSinceSend = 0;
 
 		auto bytes = Serializer::toBytes(deltaData, parent->getByteSerializationOptions());
-		const auto size = send(EntityNetworkHeaderType::Update, remote.networkId, std::move(bytes));
-
-		//Logger::logDev("Sending update " + entity.getName() + ": " + toString(size) + " bytes to peer " + toString(static_cast<int>(peerId)));
-		//Logger::logDev("Update:\n" + EntityData(deltaData).toYAML() + "\n");
+		send(EntityNetworkMessageUpdate(remote.networkId, std::move(bytes)));
+		
+		//Logger::logDev("Send Update " + entity.getName() + " to peer " + toString(static_cast<int>(peerId)) + ":\n" + deltaData.toYAML() + "\n");
 	}
 }
 
@@ -156,92 +168,101 @@ void EntityNetworkRemotePeer::sendDestroyEntity(OutboundEntity& remote)
 {
 	allocatedOutboundIds.erase(remote.networkId);
 
-	send(EntityNetworkHeaderType::Destroy, remote.networkId, Bytes());
+	send(EntityNetworkMessageDestroy(remote.networkId));
 
-	//Logger::logDev("Sending destroy entity to peer " + toString(static_cast<int>(peerId)));
+	//Logger::logDev("Send Destroy entity to peer " + toString(static_cast<int>(peerId)));
 }
 
-size_t EntityNetworkRemotePeer::send(EntityNetworkHeaderType type, EntityNetworkId networkId, Bytes data)
+void EntityNetworkRemotePeer::sendKeepAlive()
 {
-	// TODO: compress them into one update?
-
-	const size_t size = data.size() + 3;
-	
-	auto packet = OutboundNetworkPacket(std::move(data));
-	packet.addHeader(EntityNetworkEntityHeader(networkId));
-	packet.addHeader(EntityNetworkHeader(type));
-	parent->getSession().sendToPeer(packet, peerId);
-
-	return size;
+	send(EntityNetworkMessageKeepAlive());
 }
 
-void EntityNetworkRemotePeer::receiveCreateEntity(EntityNetworkId id, gsl::span<const gsl::byte> data)
+void EntityNetworkRemotePeer::send(EntityNetworkMessage message)
 {
-	const auto iter = inboundEntities.find(id);
+	parent->sendToPeer(std::move(message), peerId);
+	timeSinceSend = 0;
+}
+
+void EntityNetworkRemotePeer::receiveCreateEntity(const EntityNetworkMessageCreate& msg)
+{
+	const auto iter = inboundEntities.find(msg.entityId);
 	if (iter != inboundEntities.end()) {
-		Logger::logWarning("Entity with network id " + toString(static_cast<int>(id)) + " already exists from peer " + toString(static_cast<int>(peerId)));
+		Logger::logWarning("Entity with network id " + toString(static_cast<int>(msg.entityId)) + " already exists from peer " + toString(static_cast<int>(peerId)));
 		return;
 	}
 
-	auto delta = Deserializer::fromBytes<EntityDataDelta>(data, parent->getByteSerializationOptions());
-	auto [entityData, prefab, prefabUUID] = parent->getFactory().prefabDeltaToEntityData(delta);
+	const auto delta = Deserializer::fromBytes<EntityDataDelta>(msg.bytes, parent->getByteSerializationOptions());
+	//Logger::logDev("Instantiating from network:\n\n" + EntityData(delta).toYAML());
 
-	auto entity = parent->getFactory().createEntity(entityData);
-	if (prefab) {
-		entity.setPrefab(prefab, prefabUUID);
+	auto [entityData, prefab, prefabUUID] = parent->getFactory().prefabDeltaToEntityData(delta);
+	auto [entity, parentUUID] = parent->getFactory().loadEntityDelta(delta, {});
+
+	if (parentUUID) {
+		if (auto parentEntity = parent->getWorld().findEntity(parentUUID.value()); parentEntity) {
+			entity.setParent(parentEntity.value());
+		} else {
+			Logger::logError("Parent " + toString(*parentUUID) + " not found for network entity \"" + entity.getName() + "\"");
+		}
 	}
 
-	entity.setupNetwork(peerId);
-	
 	InboundEntity remote;
 	remote.data = std::move(entityData);
 	remote.worldId = entity.getEntityId();
+	inboundEntities[msg.entityId] = std::move(remote);
 
-	inboundEntities[id] = std::move(remote);
-
+	auto& interpolatorSet = entity.setupNetwork(peerId);
 	parent->onRemoteEntityCreated(entity, peerId);
+	parent->requestSetupInterpolators(interpolatorSet, entity, true);
 }
 
-void EntityNetworkRemotePeer::receiveUpdateEntity(EntityNetworkId id, gsl::span<const gsl::byte> data)
+void EntityNetworkRemotePeer::receiveUpdateEntity(const EntityNetworkMessageUpdate& msg)
 {
-	const auto iter = inboundEntities.find(id);
+	const auto iter = inboundEntities.find(msg.entityId);
 	if (iter == inboundEntities.end()) {
-		Logger::logWarning("Entity with network id " + toString(static_cast<int>(id)) + " not found from peer " + toString(static_cast<int>(peerId)));
+		Logger::logWarning("Entity with network id " + toString(static_cast<int>(msg.entityId)) + " not found from peer " + toString(static_cast<int>(peerId)));
 		return;
 	}
 	auto& remote = iter->second;
 
 	auto entity = parent->getWorld().getEntity(remote.worldId);
 	if (!entity.isValid()) {
-		Logger::logWarning("Entity with network id " + toString(static_cast<int>(id)) + " not alive in the world from peer " + toString(static_cast<int>(peerId)));
+		Logger::logWarning("Entity with network id " + toString(static_cast<int>(msg.entityId)) + " not alive in the world from peer " + toString(static_cast<int>(peerId)));
 		return;
 	}
 	
-	auto delta = Deserializer::fromBytes<EntityDataDelta>(data, parent->getByteSerializationOptions());
+	auto delta = Deserializer::fromBytes<EntityDataDelta>(msg.bytes, parent->getByteSerializationOptions());
 
-	parent->getFactory().updateEntity(entity, delta, static_cast<int>(EntitySerialization::Type::SaveData));
+	auto retriever = DataInterpolatorSetRetriever(entity, false);
+
+	parent->getFactory().updateEntity(entity, delta, static_cast<int>(EntitySerialization::Type::SaveData), nullptr, &retriever);
 	remote.data.applyDelta(delta);
 }
 
-void EntityNetworkRemotePeer::receiveDestroyEntity(EntityNetworkId id)
+void EntityNetworkRemotePeer::receiveDestroyEntity(const EntityNetworkMessageDestroy& msg)
 {
-	const auto iter = inboundEntities.find(id);
+	const auto iter = inboundEntities.find(msg.entityId);
 	if (iter == inboundEntities.end()) {
-		Logger::logWarning("Entity with network id " + toString(static_cast<int>(id)) + " not found from peer " + toString(static_cast<int>(peerId)));
+		Logger::logWarning("Entity with network id " + toString(static_cast<int>(msg.entityId)) + " not found from peer " + toString(static_cast<int>(peerId)));
 		return;
 	}
 	auto& remote = iter->second;
 
 	parent->getWorld().destroyEntity(remote.worldId);
 
-	inboundEntities.erase(id);
+	inboundEntities.erase(msg.entityId);
+}
+
+bool EntityNetworkRemotePeer::isRemoteReady() const
+{
+	auto& sharedData = parent->getSession().getClientSharedData<EntityClientSharedData>(peerId);
+	return !!sharedData.viewRect;
 }
 
 void EntityNetworkRemotePeer::onFirstDataBatchSent()
 {
 	if (parent->getSession().getType() == NetworkSessionType::Host) {
-		auto packet = OutboundNetworkPacket(Bytes());
-		packet.addHeader(EntityNetworkHeader(EntityNetworkHeaderType::ReadyToStart));
-		parent->getSession().sendToPeer(packet, peerId);
+		send(EntityNetworkMessage(EntityNetworkMessageReadyToStart()));
 	}
 }
+

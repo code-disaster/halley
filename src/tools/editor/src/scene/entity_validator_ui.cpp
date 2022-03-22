@@ -43,7 +43,7 @@ void EntityValidatorUI::refresh()
 		return;
 	}
 	
-	std::vector<IEntityValidator::Result> result;
+	Vector<IEntityValidator::Result> result;
 	if (isPrefab) {
 		result = validator->validateEntity(curEntityInstance, true);
 	} else {
@@ -78,7 +78,7 @@ void EntityValidatorUI::refresh()
 					auto button = std::make_shared<UIButton>("action", factory.getStyle("buttonThin"), action.label);
 					button->setHandle(UIEventType::ButtonClicked, [this, actionData = ConfigNode(action.actionData)] (const UIEvent& event)
 					{
-						Concurrent::execute(Executors::getMainThread(), [=] () {
+						Concurrent::execute(Executors::getMainUpdateThread(), [=] () {
 							validator->applyAction(*entityEditor, *curEntity, actionData);
 							entityEditor->reloadEntity();
 						});
@@ -144,7 +144,7 @@ void EntityValidatorListUI::setList(std::weak_ptr<EntityList> list)
 	entityList = list;
 }
 
-void EntityValidatorListUI::setInvalidEntities(std::vector<std::pair<int, IEntityValidator::Severity>> entities)
+void EntityValidatorListUI::setInvalidEntities(Vector<std::pair<int, IEntityValidator::Severity>> entities)
 {
 	auto severity = IEntityValidator::Severity::None;
 	invalidEntities.resize(entities.size());

@@ -17,7 +17,11 @@
 #include "halley/utils/attributes.h"
 #include <halley/data_structures/memory_pool.h>
 
+#include "system_message.h"
+
 namespace Halley {
+	class SystemMessage;
+	enum class SystemMessageDestination;
 	struct SystemMessageContext;
 	class UUID;
 	class ConfigNode;
@@ -31,14 +35,16 @@ namespace Halley {
 	public:
 		virtual ~IWorldNetworkInterface() = default;
 
-		virtual bool isRemote(EntityRef entity) const = 0;
+		virtual bool isRemote(ConstEntityRef entity) const = 0;
 		virtual void sendEntityMessage(EntityRef entity, int messageId, Bytes messageData) = 0;
+		virtual void sendSystemMessage(String targetSystem, int messageId, Bytes messageData, SystemMessageDestination destination, SystemMessageCallback callback) = 0;
+		virtual bool isHost() = 0;
 	};
 
 	class World
 	{
 	public:
-		World(const HalleyAPI& api, Resources& resources, CreateComponentFunction createComponent, CreateMessageFunction createMessage);
+		World(const HalleyAPI& api, Resources& resources, CreateComponentFunction createComponent, CreateMessageFunction createMessage, CreateSystemMessageFunction createSystemMessage);
 		~World();
 
 		static std::unique_ptr<World> make(const HalleyAPI& api, Resources& resources, const String& sceneName, bool devMode);
@@ -97,10 +103,10 @@ namespace Halley {
 		std::optional<EntityRef> findEntity(const UUID& id, bool includePending = false);
 
 		size_t numEntities() const;
-		std::vector<EntityRef> getEntities();
-		std::vector<ConstEntityRef> getEntities() const;
-		std::vector<EntityRef> getTopLevelEntities();
-		std::vector<ConstEntityRef> getTopLevelEntities() const;
+		Vector<EntityRef> getEntities();
+		Vector<ConstEntityRef> getEntities() const;
+		Vector<EntityRef> getTopLevelEntities();
+		Vector<ConstEntityRef> getTopLevelEntities() const;
 
 		void spawnPending(); // Warning: use with care, will invalidate entities
 
@@ -128,12 +134,16 @@ namespace Halley {
 		MaskStorage& getMaskStorage() const noexcept;
 		ComponentDeleterTable& getComponentDeleterTable();
 
-		size_t sendSystemMessage(SystemMessageContext context, const String& targetSystem);
+		size_t sendSystemMessage(SystemMessageContext context, const String& targetSystem, SystemMessageDestination destination);
 
 		void setNetworkInterface(IWorldNetworkInterface* interface);
-		bool isEntityNetworkRemote(EntityId entityId);
+		bool isEntityNetworkRemote(EntityId entityId) const;
+		bool isEntityNetworkRemote(EntityRef entity) const;
+		bool isEntityNetworkRemote(ConstEntityRef entity) const;
 		void sendNetworkMessage(EntityId entityId, int messageId, std::unique_ptr<Message> msg);
+		void sendNetworkSystemMessage(const String& targetSystem, const SystemMessageContext& context, SystemMessageDestination destination);
 		std::unique_ptr<Message> deserializeMessage(int msgId, gsl::span<const std::byte> data);
+		std::unique_ptr<SystemMessage> deserializeSystemMessage(int msgId, gsl::span<const std::byte> data);
 
 		bool isDevMode() const;
 
@@ -146,6 +156,7 @@ namespace Halley {
 		std::array<Vector<std::unique_ptr<System>>, static_cast<int>(TimeLine::NUMBER_OF_TIMELINES)> systems;
 		CreateComponentFunction createComponent;
 		CreateMessageFunction createMessage;
+		CreateSystemMessageFunction createSystemMessage;
 		bool entityDirty = false;
 		bool entityReloaded = false;
 		bool editor = false;
@@ -159,7 +170,7 @@ namespace Halley {
 		Vector<std::unique_ptr<Family>> families;
 		TreeMap<String, std::shared_ptr<Service>> services;
 
-		TreeMap<FamilyMaskType, std::vector<Family*>> familyCache;
+		TreeMap<FamilyMaskType, Vector<Family*>> familyCache;
 
 		std::shared_ptr<MaskStorage> maskStorage;
 		std::shared_ptr<ComponentDeleterTable> componentDeleterTable;
@@ -185,7 +196,7 @@ namespace Halley {
 
 		Service* tryGetService(const String& name) const;
 
-		const std::vector<Family*>& getFamiliesFor(const FamilyMaskType& mask);
+		const Vector<Family*>& getFamiliesFor(const FamilyMaskType& mask);
 
 		void processSystemMessages(TimeLine timeline);
 	};

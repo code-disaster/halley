@@ -7,6 +7,7 @@ component:
   - sprite:
       type: 'Halley::Sprite'
       collapse: true
+      canSave: false
   - layer:
       type: int
       defaultValue: 0
@@ -21,7 +22,10 @@ component:
   name: TextLabel
   componentDependencies: [Transform2D]
   members:
-  - text: 'Halley::TextRenderer'
+  - text:
+      type: 'Halley::TextRenderer'
+      collapse: true
+      canSave: false
   - layer:
       type: int
       defaultValue: 0
@@ -63,7 +67,7 @@ component:
   - particles:
       type: 'Halley::Particles'
   - sprites:
-      type: 'std::vector<Halley::Sprite>'
+      type: 'Halley::Vector<Halley::Sprite>'
       collapse: true
       displayName: Sprites
   - animation:

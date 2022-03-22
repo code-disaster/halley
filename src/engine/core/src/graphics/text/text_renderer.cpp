@@ -150,7 +150,7 @@ TextRenderer& TextRenderer::setPixelOffset(Vector2f offset)
 	return *this;
 }
 
-TextRenderer& TextRenderer::setColourOverride(const std::vector<ColourOverride>& colOverride)
+TextRenderer& TextRenderer::setColourOverride(const Vector<ColourOverride>& colOverride)
 {
 	if (colourOverrides != colOverride) {
 		colourOverrides = colOverride;
@@ -182,9 +182,11 @@ TextRenderer TextRenderer::clone() const
 	return *this;
 }
 
-void TextRenderer::generateSprites(std::vector<Sprite>& sprites) const
+void TextRenderer::generateSprites(Vector<Sprite>& sprites) const
 {
-	Expects(font != nullptr);
+	if (!font) {
+		return;
+	}
 
 	bool floorEnabled = false;
 	auto floorAlign = [floorEnabled] (Vector2f a) -> Vector2f
@@ -604,7 +606,7 @@ void ColourStringBuilder::append(std::string_view text, std::optional<Colour4f> 
 	}
 }
 
-std::pair<String, std::vector<ColourOverride>> ColourStringBuilder::moveResults()
+std::pair<String, Vector<ColourOverride>> ColourStringBuilder::moveResults()
 {
 	String result;
 	result.cppStr().reserve(len + 1);
@@ -614,4 +616,41 @@ std::pair<String, std::vector<ColourOverride>> ColourStringBuilder::moveResults(
 	strings.clear();
 	len = 0;
 	return { std::move(result), std::move(colours) };
+}
+
+ConfigNode ConfigNodeSerializer<TextRenderer>::serialize(const TextRenderer& text, const EntitySerializationContext& context)
+{
+	// TODO
+	ConfigNode node;
+	return node;
+}
+
+void ConfigNodeSerializer<TextRenderer>::deserialize(const EntitySerializationContext& context, const ConfigNode& node, TextRenderer& target)
+{
+	target.setFont(context.resources->get<Font>(node["font"].asString("Ubuntu Bold")));
+
+	if (node.hasKey("text")) {
+		target.setText(node["text"].asString());
+	}
+	if (node.hasKey("size")) {
+		target.setSize(node["size"].asFloat());
+	}
+	if (node.hasKey("outline")) {
+		target.setOutline(node["outline"].asFloat());
+	}
+	if (node.hasKey("colour")) {
+		target.setColour(Colour4f::fromString(node["colour"].asString()));
+	}
+	if (node.hasKey("outlineColour")) {
+		target.setOutlineColour(Colour4f::fromString(node["outlineColour"].asString()));
+	}
+	if (node.hasKey("alignment")) {
+		target.setAlignment(node["alignment"].asFloat());
+	}
+	if (node.hasKey("offset")) {
+		target.setOffset(node["offset"].asVector2f());
+	}
+	if (node.hasKey("smoothness")) {
+		target.setSmoothness(node["smoothness"].asFloat());
+	}
 }

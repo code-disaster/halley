@@ -231,6 +231,21 @@ EntityData* EntityData::tryGetInstanceUUID(const UUID& uuid)
 	return nullptr;
 }
 
+const ConfigNode& EntityData::getFieldData(const String& componentName, const String& fieldName) const
+{
+	static ConfigNode undefined;
+	
+	for (const auto& c: components) {
+		if (c.first == componentName) {
+			if (c.second.hasKey(fieldName)) {
+				return c.second[fieldName];
+			}
+		}
+	}
+
+	return undefined;
+}
+
 void EntityData::setName(String name)
 {
 	this->name = std::move(name);
@@ -252,6 +267,14 @@ void EntityData::setFlag(Flag f, bool value)
 	flags = (flags & ~flag) | (value ? flag : 0);
 }
 
+void EntityData::randomiseInstanceUUIDs()
+{
+	instanceUUID = UUID::generate();
+	for (auto& c: children) {
+		c.randomiseInstanceUUIDs();
+	}
+}
+
 void EntityData::setInstanceUUID(UUID instanceUUID)
 {
 	this->instanceUUID = std::move(instanceUUID);
@@ -267,12 +290,12 @@ void EntityData::setParentUUID(UUID parentUUID)
 	this->parentUUID = std::move(parentUUID);
 }
 
-void EntityData::setChildren(std::vector<EntityData> children)
+void EntityData::setChildren(Vector<EntityData> children)
 {
 	this->children = std::move(children);
 }
 
-void EntityData::setComponents(std::vector<std::pair<String, ConfigNode>> components)
+void EntityData::setComponents(Vector<std::pair<String, ConfigNode>> components)
 {
 	this->components = std::move(components);
 }

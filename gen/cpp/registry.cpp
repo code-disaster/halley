@@ -1,3 +1,4 @@
+// Halley codegen version 102
 #include <halley.hpp>
 using namespace Halley;
 
@@ -45,7 +46,7 @@ static ComponentFactoryMap makeComponentFactories() {
 }
 
 
-using ComponentReflectorList = std::vector<std::unique_ptr<ComponentReflector>>;
+using ComponentReflectorList = Vector<std::unique_ptr<ComponentReflector>>;
 
 static ComponentReflectorList makeComponentReflectors() {
 	ComponentReflectorList result;
@@ -66,10 +67,20 @@ static ComponentReflectorList makeComponentReflectors() {
 
 
 using MessageFactory = std::function<std::unique_ptr<Halley::Message>()>;
-using MessageFactoryList = std::vector<MessageFactory>;
+using MessageFactoryList = Vector<MessageFactory>;
 
 static MessageFactoryList makeMessageFactories() {
 	MessageFactoryList result;
+	result.reserve(0);
+	return result;
+}
+
+
+using SystemMessageFactory = std::function<std::unique_ptr<Halley::SystemMessage>()>;
+using SystemMessageFactoryList = Vector<SystemMessageFactory>;
+
+static SystemMessageFactoryList makeSystemMessageFactories() {
+	SystemMessageFactoryList result;
 	result.reserve(0);
 	return result;
 }
@@ -95,6 +106,11 @@ namespace Halley {
 
 	std::unique_ptr<Halley::Message> createMessage(int msgId) {
 		static MessageFactoryList factories = makeMessageFactories();
+		return factories.at(msgId)();
+	}
+
+	std::unique_ptr<Halley::SystemMessage> createSystemMessage(int msgId) {
+		static SystemMessageFactoryList factories = makeSystemMessageFactories();
 		return factories.at(msgId)();
 	}
 

@@ -11,8 +11,8 @@
 using namespace Halley;
 
 
-AddComponentWindow::AddComponentWindow(UIFactory& factory, const std::vector<String>& componentList, Callback callback)
-	: ChooseAssetWindow(factory, std::move(callback), false)
+AddComponentWindow::AddComponentWindow(UIFactory& factory, const Vector<String>& componentList, Callback callback)
+	: ChooseAssetWindow(Vector2f(), factory, std::move(callback), false)
 {
 	setAssetIds(componentList, "");
 	setTitle(LocalisedString::fromHardcodedString("Add Component"));
@@ -21,7 +21,7 @@ AddComponentWindow::AddComponentWindow(UIFactory& factory, const std::vector<Str
 
 
 ChooseImportAssetWindow::ChooseImportAssetWindow(UIFactory& factory, Project& project, Callback callback)
-	: ChooseAssetWindow(factory, std::move(callback), false)
+	: ChooseAssetWindow(Vector2f(), factory, std::move(callback), false)
 	, project(project)
 {
 	auto assetNames = project.getAssetSrcList();
@@ -51,8 +51,8 @@ bool ChooseImportAssetWindow::canShowAll() const
 
 
 
-ChooseAssetTypeWindow::ChooseAssetTypeWindow(UIFactory& factory, AssetType type, String defaultOption, Resources& gameResources, ProjectWindow& projectWindow, bool hasPreview, Callback callback)
-	: ChooseAssetWindow(factory, std::move(callback), false, UISizerType::Grid, hasPreview ? 4 : 1)
+ChooseAssetTypeWindow::ChooseAssetTypeWindow(Vector2f minSize, UIFactory& factory, AssetType type, String defaultOption, Resources& gameResources, ProjectWindow& projectWindow, bool hasPreview, Callback callback)
+	: ChooseAssetWindow(minSize, factory, std::move(callback), false)
 	, projectWindow(projectWindow)
 	, type(type)
 	, hasPreview(hasPreview)
@@ -91,7 +91,7 @@ std::shared_ptr<UISizer> ChooseAssetTypeWindow::makeItemSizer(std::shared_ptr<UI
 	}
 }
 
-void ChooseAssetTypeWindow::sortItems(std::vector<std::pair<String, String>>& values)
+void ChooseAssetTypeWindow::sortItems(Vector<std::pair<String, String>>& values)
 {
 	if (hasPreview) {
 		sortItemsById(values);
@@ -126,7 +126,7 @@ std::shared_ptr<UIImage> ChooseAssetTypeWindow::makePreviewIcon(const String& id
 	image->addBehaviour(std::make_shared<UIImageVisibleBehaviour>([imageWeak, this, id, thumbSize] (UIImage& img)
 	{
 		if (auto future = projectWindow.getAssetPreviewData(type, id, Vector2i(thumbSize)); future.isValid()) {
-			future.then(Executors::getMainThread(), [imageWeak, thumbSize] (AssetPreviewData data)
+			future.then(Executors::getMainUpdateThread(), [imageWeak, thumbSize] (AssetPreviewData data)
 			{
 				if (auto image = imageWeak.lock(); image) {
 					auto sprite = std::move(data.sprite);
@@ -156,11 +156,14 @@ std::shared_ptr<UISizer> ChooseAssetTypeWindow::makePreviewItemSizer(std::shared
 	}
 }
 
+int ChooseAssetTypeWindow::getNumColumns(Vector2f scrollPaneSize) const
+{
+	return hasPreview ? static_cast<int>(std::floor(scrollPaneSize.x / 150.0f)) : 1;
+}
 
 
-
-ChoosePrefabWindow::ChoosePrefabWindow(UIFactory& factory, String defaultOption, Resources& gameResources, ProjectWindow& projectWindow, Callback callback)
-	: ChooseAssetTypeWindow(factory, AssetType::Prefab, defaultOption, gameResources, projectWindow, true, std::move(callback))
+ChoosePrefabWindow::ChoosePrefabWindow(UIFactory& factory, std::optional<String> defaultOption, Resources& gameResources, ProjectWindow& projectWindow, Callback callback)
+	: ChooseAssetTypeWindow(projectWindow.getChoosePrefabWindowSize(), factory, AssetType::Prefab, defaultOption.value_or(projectWindow.getSetting(EditorSettingType::Project, lastOptionKey).asString("")), gameResources, projectWindow, true, std::move(callback))
 {
 	const auto lastCategory = projectWindow.getSetting(EditorSettingType::Project, lastCategoryKey).asString("");
 	setCategoryFilters(projectWindow.getAssetPreviewGenerator().getPrefabCategoryFilters(), lastCategory);
@@ -169,4 +172,14 @@ ChoosePrefabWindow::ChoosePrefabWindow(UIFactory& factory, String defaultOption,
 void ChoosePrefabWindow::onCategorySet(const String& id)
 {
 	projectWindow.setSetting(EditorSettingType::Project, lastCategoryKey, ConfigNode(id));
+}
+
+void ChoosePrefabWindow::onOptionSelected(const String& id)
+{
+	lastOption = id;
+}
+
+void ChoosePrefabWindow::onDestroyRequested()
+{
+	projectWindow.setSetting(EditorSettingType::Project, lastOptionKey, ConfigNode(lastOption));
 }

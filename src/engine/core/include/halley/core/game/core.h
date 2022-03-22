@@ -64,6 +64,7 @@ namespace Halley
 		void removeProfilerCallback(IProfileCallback* callback) override;
 
 		int getExitCode() const { return exitCode; }
+		
 
 	private:
 		void deInit();
@@ -116,7 +117,7 @@ namespace Halley
 
 		std::unique_ptr<DevConClient> devConClient;
 
-		std::vector<IProfileCallback*> profileCallbacks;
+		Vector<IProfileCallback*> profileCallbacks;
 		
 		TreeMap<PluginType, Vector<std::unique_ptr<Plugin>>> plugins;
 		HalleyStatics statics;

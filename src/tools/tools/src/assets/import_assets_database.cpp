@@ -4,8 +4,6 @@
 #include "halley/resources/resource_data.h"
 #include "halley/tools/file/filesystem.h"
 
-constexpr static int currentAssetVersion = 95;
-
 using namespace Halley;
 
 AssetPath::AssetPath()
@@ -119,11 +117,12 @@ void ImportAssetsDatabase::InputFileEntry::deserialize(Deserializer& s)
 	s >> basePath;
 }
 
-ImportAssetsDatabase::ImportAssetsDatabase(Path directory, Path dbFile, Path assetsDbFile, std::vector<String> platforms)
+ImportAssetsDatabase::ImportAssetsDatabase(Path directory, Path dbFile, Path assetsDbFile, Vector<String> platforms, int version)
 	: platforms(std::move(platforms))
 	, directory(std::move(directory))
 	, dbFile(std::move(dbFile))
 	, assetsDbFile(std::move(assetsDbFile))
+	, version(version)
 {
 	load();
 }
@@ -385,10 +384,10 @@ void ImportAssetsDatabase::markAssetsAsStillPresent(const std::map<String, Impor
 	}
 }
 
-std::vector<ImportAssetsDatabaseEntry> ImportAssetsDatabase::getAllMissing() const
+Vector<ImportAssetsDatabaseEntry> ImportAssetsDatabase::getAllMissing() const
 {
 	std::lock_guard<std::mutex> lock(mutex);
-	std::vector<ImportAssetsDatabaseEntry> result;
+	Vector<ImportAssetsDatabaseEntry> result;
 	for (auto& e : assetsImported) {
 		if (!e.second.present) {
 			result.push_back(e.second.asset);
@@ -397,7 +396,7 @@ std::vector<ImportAssetsDatabaseEntry> ImportAssetsDatabase::getAllMissing() con
 	return result;
 }
 
-std::vector<AssetResource> ImportAssetsDatabase::getOutFiles(String assetId) const
+Vector<AssetResource> ImportAssetsDatabase::getOutFiles(String assetId) const
 {
 	std::lock_guard<std::mutex> lock(mutex);
 	auto iter = assetsImported.find(assetId);
@@ -408,20 +407,20 @@ std::vector<AssetResource> ImportAssetsDatabase::getOutFiles(String assetId) con
 	}
 }
 
-std::vector<String> ImportAssetsDatabase::getInputFiles() const
+Vector<String> ImportAssetsDatabase::getInputFiles() const
 {
 	std::lock_guard<std::mutex> lock(mutex);
-	std::vector<String> result;
+	Vector<String> result;
 	for (auto& i: inputFiles) {
 		result.push_back(i.first);
 	}
 	return result;
 }
 
-std::vector<std::pair<AssetType, String>> ImportAssetsDatabase::getAssetsFromFile(const Path& inputFile)
+Vector<std::pair<AssetType, String>> ImportAssetsDatabase::getAssetsFromFile(const Path& inputFile)
 {
 	std::lock_guard<std::mutex> lock(mutex);
-	std::vector<std::pair<AssetType, String>> result;
+	Vector<std::pair<AssetType, String>> result;
 
 	for (auto& a: assetsImported) {
 		const auto& asset = a.second.asset;
@@ -441,7 +440,6 @@ std::vector<std::pair<AssetType, String>> ImportAssetsDatabase::getAssetsFromFil
 
 void ImportAssetsDatabase::serialize(Serializer& s) const
 {
-	int version = currentAssetVersion;
 	s << version;
 	s << platforms;
 	s << assetsImported;
@@ -450,10 +448,10 @@ void ImportAssetsDatabase::serialize(Serializer& s) const
 
 void ImportAssetsDatabase::deserialize(Deserializer& s)
 {
-	int version;
-	s >> version;
-	if (version == currentAssetVersion) {
-		std::vector<String> platformsRead;
+	int loadVersion;
+	s >> loadVersion;
+	if (version == loadVersion) {
+		Vector<String> platformsRead;
 		s >> platformsRead;
 		if (platformsRead == platforms) {
 			s >> assetsImported;

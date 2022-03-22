@@ -54,6 +54,8 @@ namespace Halley {
 
         void render(RenderContext& rc) const override;
 
+    	Vector2f getChoosePrefabWindowSize() const;
+
     protected:
         void onProjectDLLStatusChange(ProjectDLL::Status status) override;
 
@@ -98,7 +100,7 @@ namespace Halley {
 
 		std::unique_ptr<TaskSet> tasks;
 
-		std::vector<IEditorCustomTools::ToolData> customTools;
+		Vector<IEditorCustomTools::ToolData> customTools;
     	bool waitingToLoadCustomUI = true;
     	bool hasAssets = false;
     	bool hasDLL = false;

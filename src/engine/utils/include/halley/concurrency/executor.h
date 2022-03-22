@@ -5,7 +5,7 @@
 #include <condition_variable>
 #include <functional>
 #include <atomic>
-#include <vector>
+#include "halley/data_structures/vector.h"
 #include "halley/text/halleystring.h"
 
 namespace Halley
@@ -19,7 +19,7 @@ namespace Halley
 		void addToQueue(TaskBase task);
 
 		TaskBase getNext();
-		std::vector<TaskBase> getAll();
+		Vector<TaskBase> getAll();
 
 		size_t threadCount() const;
 		void onAttached();
@@ -47,8 +47,11 @@ namespace Halley
 		static ExecutionQueue& getCPU() { return instance->cpu; }
 		static ExecutionQueue& getCPUAux() { return instance->cpuAux; }
 		static ExecutionQueue& getVideoAux() { return instance->videoAux; }
-		static ExecutionQueue& getMainThread() { return instance->mainThread; }
+		static ExecutionQueue& getMainUpdateThread() { return instance->mainUpdateThread; }
+		static ExecutionQueue& getMainRenderThread() { return instance->mainRenderThread; }
 		static ExecutionQueue& getDiskIO() { return instance->diskIO; }
+
+		[[deprecated]] static ExecutionQueue& getMainThread() { return instance->mainUpdateThread; }
 
 	private:
 		static Executors* instance;
@@ -56,7 +59,8 @@ namespace Halley
 		ExecutionQueue cpu;
 		ExecutionQueue cpuAux;
 		ExecutionQueue videoAux;
-		ExecutionQueue mainThread;
+		ExecutionQueue mainUpdateThread;
+		ExecutionQueue mainRenderThread;
 		ExecutionQueue diskIO;
 	};
 
@@ -102,7 +106,7 @@ namespace Halley
 
 	private:
 		String name;
-		std::vector<std::unique_ptr<Executor>> executors;
-		std::vector<std::thread> threads;
+		Vector<std::unique_ptr<Executor>> executors;
+		Vector<std::thread> threads;
 	};
 }

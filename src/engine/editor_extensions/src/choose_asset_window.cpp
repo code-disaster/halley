@@ -6,16 +6,15 @@
 #include "halley/utils/algorithm.h"
 #include "halley/ui/widgets/ui_image.h"
 #include "halley/ui/ui_factory.h"
+#include "halley/ui/widgets/ui_scrollbar_pane.h"
 
 using namespace Halley;
 
 
-ChooseAssetWindow::ChooseAssetWindow(UIFactory& factory, Callback callback, bool canShowBlank, UISizerType orientation, int nColumns)
-	: UIWidget("choose_asset_window", {}, UISizer())
+ChooseAssetWindow::ChooseAssetWindow(Vector2f minSize, UIFactory& factory, Callback callback, bool canShowBlank)
+	: UIWidget("choose_asset_window", minSize, UISizer())
 	, factory(factory)
 	, callback(std::move(callback))
-	, orientation(orientation)
-	, nColumns(nColumns)
 	, fuzzyMatcher(false, 100)
 	, canShowBlank(canShowBlank)
 {
@@ -36,12 +35,12 @@ void ChooseAssetWindow::onAddedToRoot(UIRoot& root)
 	root.registerKeyPressListener(shared_from_this(), 1);
 }
 
-void ChooseAssetWindow::setAssetIds(std::vector<String> ids, String defaultOption)
+void ChooseAssetWindow::setAssetIds(Vector<String> ids, String defaultOption)
 {
 	setAssetIds(std::move(ids), {}, std::move(defaultOption));
 }
 
-void ChooseAssetWindow::setAssetIds(std::vector<String> _ids, std::vector<String> _names, String _defaultOption)
+void ChooseAssetWindow::setAssetIds(Vector<String> _ids, Vector<String> _names, String _defaultOption)
 {
 	origIds = std::move(_ids);
 	origNames = std::move(_names);
@@ -94,6 +93,8 @@ void ChooseAssetWindow::setCategoryFilter(const String& filterId)
 
 void ChooseAssetWindow::populateList()
 {
+	const auto initialSize = options->getSize();
+	
 	options->clear();
 	const bool hasFilter = !filter.isEmpty();
 	const bool forceText = hasFilter;
@@ -101,7 +102,9 @@ void ChooseAssetWindow::populateList()
 	if (forceText) {
 		options->setOrientation(UISizerType::Vertical, 1);
 	} else {
-		options->setOrientation(orientation, nColumns);
+		const auto cols = getNumColumns(initialSize);
+		const auto orientation = cols == 1 ? UISizerType::Vertical : UISizerType::Grid;
+		options->setOrientation(orientation, cols);
 	}
 	
 	if (hasFilter) {
@@ -113,7 +116,7 @@ void ChooseAssetWindow::populateList()
 			options->addTextItem("", LocalisedString::fromHardcodedString("[Empty]"));
 		}
 
-		std::vector<std::pair<String, String>> items;
+		Vector<std::pair<String, String>> items;
 		for (size_t i = 0; i < ids.size(); ++i) {
 			items.emplace_back(ids[i], names[i]);
 		}
@@ -123,11 +126,17 @@ void ChooseAssetWindow::populateList()
 		}
 	}
 
-	options->layout();
+	layout();
 	if (hasFilter) {
 		options->setSelectedOption(0);
 	} else {
 		options->setSelectedOptionId(defaultOption);
+	}
+
+	if (options->getCount() > 0) {
+		const auto scroll = getWidgetAs<UIScrollBarPane>("optionsScroll");
+		const auto itemSize = options->getItem(0)->getSize().y;
+		scroll->getPane()->setScrollSpeed(itemSize);
 	}
 }
 
@@ -142,7 +151,7 @@ void ChooseAssetWindow::addItem(const String& id, const String& name, gsl::span<
 	auto label = options->makeLabel("", getItemLabel(id, name, hasSearch));
 	auto labelCol = label->getColour();
 	if (!matchPositions.empty()) {
-		std::vector<ColourOverride> overrides;
+		Vector<ColourOverride> overrides;
 		for (const auto& p: matchPositions) {
 			overrides.emplace_back(p.first, highlightCol);
 			overrides.emplace_back(p.first + p.second, labelCol);
@@ -177,22 +186,31 @@ void ChooseAssetWindow::onCategorySet(const String& id)
 {
 }
 
-void ChooseAssetWindow::sortItems(std::vector<std::pair<String, String>>& items)
+void ChooseAssetWindow::onOptionSelected(const String& id)
+{
+}
+
+void ChooseAssetWindow::sortItems(Vector<std::pair<String, String>>& items)
 {
 	sortItemsByName(items);
 }
 
-void ChooseAssetWindow::sortItemsByName(std::vector<std::pair<String, String>>& items)
+void ChooseAssetWindow::sortItemsByName(Vector<std::pair<String, String>>& items)
 {
 	std::sort(items.begin(), items.end(), [=] (const auto& a, const auto& b) { return a.second < b.second; });
 }
 
-void ChooseAssetWindow::sortItemsById(std::vector<std::pair<String, String>>& items)
+void ChooseAssetWindow::sortItemsById(Vector<std::pair<String, String>>& items)
 {
 	std::sort(items.begin(), items.end(), [=] (const auto& a, const auto& b) { return a.first < b.first; });
 }
 
-void ChooseAssetWindow::setCategoryFilters(std::vector<AssetCategoryFilter> filters, const String& defaultOption)
+int ChooseAssetWindow::getNumColumns(Vector2f scrollPaneSize) const
+{
+	return 1;
+}
+
+void ChooseAssetWindow::setCategoryFilters(Vector<AssetCategoryFilter> filters, const String& defaultOption)
 {
 	categoryFilters = std::move(filters);
 	
@@ -209,6 +227,12 @@ void ChooseAssetWindow::setCategoryFilters(std::vector<AssetCategoryFilter> filt
 	{
 		setCategoryFilter(id);
 	});
+
+	bindData("options", "", [=](const String& id)
+	{
+		onOptionSelected(id);
+	});
+	
 	setCategoryFilter(defaultOption);
 }
 
@@ -280,6 +304,8 @@ void ChooseAssetWindow::onMakeUI()
 	});
 
 	setChildLayerAdjustment(10);
+
+	layout();
 }
 
 LocalisedString ChooseAssetWindow::getItemLabel(const String& id, const String& name, bool hasSearch)

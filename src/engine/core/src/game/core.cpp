@@ -131,7 +131,7 @@ void Core::onReloaded()
 	if (game->shouldCreateSeparateConsole()) {
 		setOutRedirect(true);
 	}
-	statics.resume(api->system);
+	statics.resume(api->system, game->getMaxThreads());
 	if (api->system) {
 		api->system->setThreadName("main");
 	}
@@ -178,11 +178,12 @@ int Core::getTargetFPS()
 void Core::init()
 {
 	Expects(!initialized);
+	initialized = true;
 	
 	// Initialize API
 	api->init();
 	api->systemInternal->setEnvironment(environment.get());
-	statics.resume(api->system);
+	statics.resume(api->system, game->getMaxThreads());
 	if (api->system) {
 		api->system->setThreadName("main");
 	}
@@ -207,14 +208,13 @@ void Core::init()
 	if (api->video) {
 		painter = api->videoInternal->makePainter(*resources);
 	}
-
-	initialized = true;
 }
 
 void Core::deInit()
 {
 	std::cout << "Game shutting down." << std::endl;
 	Expects(initialized);
+	initialized = false;
 
 	// Ensure stage is cleaned up
 	running = false;
@@ -237,17 +237,16 @@ void Core::deInit()
 		api->audio->stopPlayback();
 	}
 
+	
+	// Stop thread pool and other statics
+	statics.suspend();
+	
 	// Deinit resources
 	resources.reset();
 
 	// Deinit API (note that this has to happen after resources, otherwise resources which rely on an API to de-init, such as textures, will crash)
 	api->deInit();
 	api.reset();
-	
-	// Stop thread pool and other statics
-	statics.suspend();
-	
-	initialized = false;
 
 	// Deinit console redirector
 	std::cout << "Goodbye!" << std::endl;
@@ -511,9 +510,11 @@ void Core::setStage(std::unique_ptr<Stage> next)
 
 void Core::quit(int code)
 {
-	exitCode = code;
-	std::cout << "Game terminating via CoreAPI::quit(" << code << ")." << std::endl;
-	running = false;
+	if (running) {
+		exitCode = code;
+		std::cout << "Game terminating via CoreAPI::quit(" << code << ")." << std::endl;
+		running = false;
+	}
 }
 
 Resources& Core::getResources()

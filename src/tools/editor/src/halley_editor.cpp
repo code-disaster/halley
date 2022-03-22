@@ -90,7 +90,7 @@ void HalleyEditor::init(const Environment& environment, const Vector<String>& ar
 	parseArguments(args);
 }
 
-void HalleyEditor::parseArguments(const std::vector<String>& args)
+void HalleyEditor::parseArguments(const Vector<String>& args)
 {
 	gotProjectPath = false;
 
@@ -112,7 +112,7 @@ std::unique_ptr<Stage> HalleyEditor::startGame()
 {
 	auto& api = getAPI();
 	preferences = std::make_unique<Preferences>();
-	preferences->setEditorVersion("2022-01-17");
+	preferences->setEditorVersion("2022-02-22");
 	preferences->loadFromFile(*api.system);
 
 	projectLoader = std::make_unique<ProjectLoader>(api.core->getStatics(), rootPath, preferences->getDisabledPlatforms());

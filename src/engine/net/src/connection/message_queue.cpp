@@ -1,6 +1,6 @@
 #include <halley/support/exception.h>
 #include "connection/message_queue.h"
-#include "connection/reliable_connection.h"
+#include "connection/ack_unreliable_connection.h"
 #include "halley/text/string_converter.h"
 
 using namespace Halley;
@@ -10,29 +10,29 @@ MessageQueue::~MessageQueue()
 {
 }
 
-void MessageQueue::setChannel(int channel, ChannelSettings settings)
+void MessageQueue::enqueue(std::unique_ptr<NetworkMessage> msg, uint8_t channel)
 {
+	auto packet = OutboundNetworkPacket(msg->getBytes());
+	packet.addHeader(getMessageType(*msg));
+	enqueue(std::move(packet), channel);
 }
 
-void MessageQueue::addFactory(std::unique_ptr<NetworkMessageFactoryBase> factory)
+Vector<std::unique_ptr<NetworkMessage>> MessageQueue::receiveMessages()
 {
-	typeToMsgIndex[factory->getTypeIndex()] = int(factories.size());
-	factories.emplace_back(std::move(factory));
-}
+	Vector<std::unique_ptr<NetworkMessage>> result;
+	auto msgs = receivePackets();
+	result.reserve(msgs.size());
 
-int MessageQueue::getMessageType(NetworkMessage& msg) const
-{
-	auto idxIter = typeToMsgIndex.find(std::type_index(typeid(msg)));
-	if (idxIter == typeToMsgIndex.end()) {
-		throw Exception("No appropriate factory for this type of message: " + String(typeid(msg).name()), HalleyExceptions::Network);
+	for (auto& msg: msgs) {
+		uint16_t messageType = 0;
+		msg.extractHeader(messageType);
+		result.push_back(deserializeMessage(msg.getBytes(), messageType, 0));
 	}
-	return idxIter->second;
+
+	return result;
 }
 
-std::unique_ptr<NetworkMessage> MessageQueue::deserializeMessage(gsl::span<const gsl::byte> data, unsigned short msgType, unsigned short seq)
+void MessageQueue::setChannel(uint8_t channel, ChannelSettings settings)
 {
-	auto msg = factories.at(msgType)->create(data);
-	msg->seq = seq;
-	return msg;
 }
 

@@ -18,7 +18,10 @@ ComponentSchema::ComponentSchema(YAML::Node node, bool generate)
 			String name = m->first.as<std::string>();
 			if (m->second.IsScalar()) {
 				// e.g. - value: int
-				members.emplace_back(TypeSchema(m->second.as<std::string>()), std::move(name));
+				auto& field = members.emplace_back(TypeSchema(m->second.as<std::string>()), std::move(name));
+				field.serializationTypes.push_back(EntitySerialization::Type::Prefab);
+				field.serializationTypes.push_back(EntitySerialization::Type::SaveData);
+				field.serializationTypes.push_back(EntitySerialization::Type::Network);
 			} else {
 				// e.g.
 				// value:
@@ -29,14 +32,24 @@ ComponentSchema::ComponentSchema(YAML::Node node, bool generate)
 				const String type = memberProperties["type"].as<std::string>();
 				const String access = memberProperties["access"].as<std::string>("public");
 				const String displayName = memberProperties["displayName"].as<std::string>("");
-				const bool canEdit = memberProperties["canEdit"].as<bool>(true);
-				const bool canSave = memberProperties["canSave"].as<bool>(true);
 				const bool hideInEditor = memberProperties["hideInEditor"].as<bool>(false);
 				const bool collapse = memberProperties["collapse"].as<bool>(false);
-				
+
+				std::set<EntitySerialization::Type> serializeTypes;
+				if (memberProperties["canEdit"].as<bool>(true)) {
+					serializeTypes.insert(EntitySerialization::Type::Prefab);
+				}
+				bool canSave = memberProperties["canSave"].as<bool>(true);
+				if (canSave) {
+					serializeTypes.insert(EntitySerialization::Type::SaveData);
+				}
+				if (memberProperties["canNetwork"].as<bool>(canSave)) {
+					serializeTypes.insert(EntitySerialization::Type::Network);
+				}
+
 				std::optional<Range<float>> range;
 				if (memberProperties["range"].IsDefined()) {
-					std::vector<float> vs;
+					Vector<float> vs;
 					for (auto& r: memberProperties["range"]) {
 						vs.push_back(r.as<float>());
 					}
@@ -49,7 +62,7 @@ ComponentSchema::ComponentSchema(YAML::Node node, bool generate)
 					throw Exception("serializable field is removed from ECS component definitions. Use canSave and canEdit instead.", HalleyExceptions::Entity);
 				}
 
-				std::vector<String> defaultValue;
+				Vector<String> defaultValue;
 				const auto& defNode = memberProperties["defaultValue"];
 				if (defNode.IsDefined()) {
 					if (defNode.IsSequence()) {
@@ -60,11 +73,10 @@ ComponentSchema::ComponentSchema(YAML::Node node, bool generate)
 						defaultValue.emplace_back(defNode.as<std::string>());
 					}
 				}
-				
+
 				auto& field = members.emplace_back(TypeSchema(type), std::move(name), std::move(defaultValue), fromString<MemberAccess>(access));
 				field.collapse = collapse;
-				field.canEdit = canEdit;
-				field.canSave = canSave;
+				field.serializationTypes = Vector<EntitySerialization::Type>(serializeTypes.begin(), serializeTypes.end());
 				field.hideInEditor = hideInEditor;
 				field.displayName = displayName;
 				field.range = range;

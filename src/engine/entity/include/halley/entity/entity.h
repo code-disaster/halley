@@ -14,13 +14,14 @@
 #include "halley/maths/uuid.h"
 
 namespace Halley {
+	class DataInterpolatorSet;
 	class World;
 	class System;
 	class EntityRef;
 	class Prefab;
 
 	// True if T::onAddedToEntity(EntityRef&) exists
-	template <class, class = void_t<>> struct HasOnAddedToEntityMember : std::false_type {};
+	template <class, class = std::void_t<>> struct HasOnAddedToEntityMember : std::false_type {};
 	template <class T> struct HasOnAddedToEntityMember<T, decltype(std::declval<T&>().onAddedToEntity(std::declval<EntityRef&>()))> : std::true_type { };
 	
 	class MessageEntry
@@ -129,9 +130,11 @@ namespace Halley {
 		void refresh(MaskStorage& storage, ComponentDeleterTable& table);
 		void destroy();
 		
-		void sortChildrenByInstanceUUIDs(const std::vector<UUID>& uuids);
+		void sortChildrenByInstanceUUIDs(const Vector<UUID>& uuids);
 
 		bool isEmpty() const;
+
+		bool isRemote(const World& world) const;
 
 	private:
 		// !!! WARNING !!!
@@ -192,7 +195,7 @@ namespace Halley {
 		void removeComponentById(World& world, int id);
 		void removeAllComponents(World& world);
 		void deleteComponent(Component* component, int id, ComponentDeleterTable& table);
-		void keepOnlyComponentsWithIds(const std::vector<int>& ids, World& world);
+		void keepOnlyComponentsWithIds(const Vector<int>& ids, World& world);
 
 		void onReady();
 
@@ -201,14 +204,14 @@ namespace Halley {
 
 		Entity* getParent() const { return parent; }
 		void setParent(Entity* parent, bool propagate = true, size_t childIdx = -1);
-		const std::vector<Entity*>& getChildren() const { return children; }
+		const Vector<Entity*>& getChildren() const { return children; }
 		void addChild(Entity& child);
 		void detachChildren();
 		void markHierarchyDirty();
 		void propagateChildrenChange();
 		void propagateChildWorldPartition(uint8_t newWorldPartition);
 
-		void setupNetwork(EntityRef& ref, uint8_t peerId);
+		DataInterpolatorSet& setupNetwork(EntityRef& ref, uint8_t peerId);
 		std::optional<uint8_t> getOwnerPeerId() const;
 
 		void doDestroy(bool updateParenting);
@@ -222,7 +225,7 @@ namespace Halley {
 	public:
 		class Iterator {
 		public:
-			Iterator(std::vector<Entity*>::const_iterator iter, World& world)
+			Iterator(Vector<Entity*>::const_iterator iter, World& world)
 				: iter(iter)
 				, world(world)
 			{}
@@ -246,11 +249,11 @@ namespace Halley {
 			EntityRef operator*() const;
 
 		private:
-			std::vector<Entity*>::const_iterator iter;
+			Vector<Entity*>::const_iterator iter;
 			World& world;
 		};
 		
-		EntityRefIterable(const std::vector<Entity*>& entities, World& world)
+		EntityRefIterable(const Vector<Entity*>& entities, World& world)
 			: entities(entities)
 			, world(world)
 		{}
@@ -266,7 +269,7 @@ namespace Halley {
 		}
 
 	private:
-		const std::vector<Entity*>& entities;
+		const Vector<Entity*>& entities;
 		World& world;
 	};
 
@@ -366,6 +369,64 @@ namespace Halley {
 			return entity->tryGetComponent<T>();
 		}
 
+		template <typename T>
+		T* tryGetComponentInAncestors()
+		{
+			auto* c = tryGetComponent<T>();
+			if (c) {
+				return c;
+			}
+			if (auto parent = getParent(); parent.isValid()) {
+				return parent.tryGetComponentInAncestors<T>();
+			}
+			return nullptr;
+		}
+
+		template <typename T>
+		const T* tryGetComponentInAncestors() const
+		{
+			auto* c = tryGetComponent<T>();
+			if (c) {
+				return c;
+			}
+			if (const auto parent = getParent(); parent.isValid()) {
+				return parent.tryGetComponentInAncestors<T>();
+			}
+			return nullptr;
+		}
+
+		template <typename T>
+		T* tryGetComponentInTree()
+		{
+			auto* comp = tryGetComponent<T>();
+			if (comp) {
+				return comp;
+			}
+			for (auto& child: getRawChildren()) {
+				auto* childComp = EntityRef(*child, getWorld()).tryGetComponentInTree<T>();
+				if (childComp) {
+					return childComp;
+				}
+			}
+			return nullptr;
+		}
+
+		template <typename T>
+		const T* tryGetComponentInTree() const
+		{
+			auto* comp = tryGetComponent<T>();
+			if (comp) {
+				return comp;
+			}
+			for (auto& child: getRawChildren()) {
+				auto* childComp = EntityRef(*child, getWorld()).tryGetComponentInTree<T>();
+				if (childComp) {
+					return childComp;
+				}
+			}
+			return nullptr;
+		}
+
 		EntityId getEntityId() const
 		{
 			validate();
@@ -429,7 +490,7 @@ namespace Halley {
 			return entity->prefabUUID;
 		}
 		
-		void keepOnlyComponentsWithIds(const std::vector<int>& ids)
+		void keepOnlyComponentsWithIds(const Vector<int>& ids)
 		{
 			validate();
 			entity->keepOnlyComponentsWithIds(ids, *world);
@@ -467,7 +528,7 @@ namespace Halley {
 			entity->setParent(nullptr);
 		}
 
-		const std::vector<Entity*>& getRawChildren() const
+		const Vector<Entity*>& getRawChildren() const
 		{
 			validate();
 			return entity->getChildren();
@@ -566,13 +627,13 @@ namespace Halley {
 			return entity->components[idx];
 		}
 
-		std::vector<std::pair<int, Component*>>::iterator begin() const
+		Vector<std::pair<int, Component*>>::iterator begin() const
 		{
 			validate();
 			return entity->components.begin();
 		}
 
-		std::vector<std::pair<int, Component*>>::iterator end() const
+		Vector<std::pair<int, Component*>>::iterator end() const
 		{
 			validate();
 			return entity->components.begin() + entity->liveComponents;
@@ -599,7 +660,7 @@ namespace Halley {
 			return entity->reloaded;
 		}
 
-		void sortChildrenByInstanceUUIDs(const std::vector<UUID>& uuids)
+		void sortChildrenByInstanceUUIDs(const Vector<UUID>& uuids)
 		{
 			validate();
 			entity->sortChildrenByInstanceUUIDs(uuids);
@@ -624,18 +685,29 @@ namespace Halley {
 			return entity && entity->prefab ? entity->prefab->getAssetId() : std::optional<String>{};
 		}
 
-		void setupNetwork(uint8_t peerId)
+		DataInterpolatorSet& setupNetwork(uint8_t peerId)
 		{
 			Expects(entity);
-			entity->setupNetwork(*this, peerId);
+			return entity->setupNetwork(*this, peerId);
 		}
 
-		std::optional<uint8_t> getOwnerPeerId()
+		std::optional<uint8_t> getOwnerPeerId() const
 		{
 			Expects(entity);
 			return entity->getOwnerPeerId();
 		}
 
+		bool isRemote() const
+		{
+			Expects(entity);
+			return entity->isRemote(*world);
+		}
+
+		bool isLocal() const
+		{
+			Expects(entity);
+			return !entity->isRemote(*world);
+		}
 
 		bool isEmpty() const
 		{
@@ -736,7 +808,7 @@ namespace Halley {
 			return parent != nullptr ? ConstEntityRef(*parent, *world) : std::optional<ConstEntityRef>();
 		}
 
-		[[deprecated]] const std::vector<Entity*>& getRawChildren() const
+		[[deprecated]] const Vector<Entity*>& getRawChildren() const
 		{
 			return entity->getChildren();
 		}
@@ -763,13 +835,13 @@ namespace Halley {
 			return entity->components[idx];
 		}
 
-		std::vector<std::pair<int, Component*>>::const_iterator begin() const
+		Vector<std::pair<int, Component*>>::const_iterator begin() const
 		{
 			Expects(entity);
 			return entity->components.begin();
 		}
 
-		std::vector<std::pair<int, Component*>>::const_iterator end() const
+		Vector<std::pair<int, Component*>>::const_iterator end() const
 		{
 			Expects(entity);
 			return entity->components.begin() + entity->liveComponents;
@@ -784,6 +856,53 @@ namespace Halley {
 		bool isValid() const
 		{
 			return entity != nullptr;
+		}
+
+		std::optional<uint8_t> getOwnerPeerId() const
+		{
+			Expects(entity);
+			return entity->getOwnerPeerId();
+		}
+
+		bool isRemote() const
+		{
+			Expects(entity);
+			return entity->isRemote(*world);
+		}
+
+		bool isLocal() const
+		{
+			Expects(entity);
+			return !entity->isRemote(*world);
+		}
+
+		template <typename T>
+		const T* tryGetComponentInAncestors() const
+		{
+			auto* c = tryGetComponent<T>();
+			if (c) {
+				return c;
+			}
+			if (const auto parent = getParent(); parent.isValid()) {
+				return parent.tryGetComponentInAncestors<T>();
+			}
+			return nullptr;
+		}
+
+		template <typename T>
+		const T* tryGetComponentInTree() const
+		{
+			auto* comp = tryGetComponent<T>();
+			if (comp) {
+				return comp;
+			}
+			for (auto& child: getRawChildren()) {
+				auto* childComp = ConstEntityRef(*child, *world).tryGetComponentInTree<T>();
+				if (childComp) {
+					return childComp;
+				}
+			}
+			return nullptr;
 		}
 
 	private:

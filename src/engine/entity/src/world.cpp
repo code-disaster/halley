@@ -20,11 +20,12 @@
 
 using namespace Halley;
 
-World::World(const HalleyAPI& api, Resources& resources, CreateComponentFunction createComponent, CreateMessageFunction createMessage)
+World::World(const HalleyAPI& api, Resources& resources, CreateComponentFunction createComponent, CreateMessageFunction createMessage, CreateSystemMessageFunction createSystemMessage)
 	: api(api)
 	, resources(resources)
 	, createComponent(std::move(createComponent))
 	, createMessage(std::move(createMessage))
+	, createSystemMessage(std::move(createSystemMessage))
 	, maskStorage(FamilyMask::MaskStorageInterface::createStorage())
 	, componentDeleterTable(std::make_shared<ComponentDeleterTable>())
 	, entityPool(std::make_shared<PoolAllocator<Entity>>())
@@ -58,7 +59,7 @@ World::~World()
 
 std::unique_ptr<World> World::make(const HalleyAPI& api, Resources& resources, const String& sceneName, bool devMode)
 {
-	auto world = std::make_unique<World>(api, resources, CreateEntityFunctions::getCreateComponent(), CreateEntityFunctions::getCreateMessage());
+	auto world = std::make_unique<World>(api, resources, CreateEntityFunctions::getCreateComponent(), CreateEntityFunctions::getCreateMessage(), CreateEntityFunctions::getCreateSystemMessage());
 	const auto& sceneConfig = resources.get<ConfigFile>(sceneName)->getRoot();
 	world->loadSystems(sceneConfig, CreateEntityFunctions::getCreateSystem());
 	return world;
@@ -298,24 +299,6 @@ const Entity* World::tryGetRawEntity(EntityId id) const
 
 std::optional<EntityRef> World::findEntity(const UUID& id, bool includePending)
 {
-	/*
-	for (auto& e: entities) {
-		if (e->getInstanceUUID() == id && e->isAlive()) {
-			return EntityRef(*e, *this);
-		}
-	}
-
-	if (includePending) {
-		for (auto& e : entitiesPendingCreation) {
-			if (e->getInstanceUUID() == id && e->isAlive()) {
-				return EntityRef(*e, *this);
-			}
-		}
-	}
-	
-	return std::optional<EntityRef>();
-	*/
-
 	const auto result = uuidMap.find(id);
 	if (result != uuidMap.end()) {
 		Ensures(result->second->getInstanceUUID() == id);
@@ -329,9 +312,9 @@ size_t World::numEntities() const
 	return entities.size();
 }
 
-std::vector<EntityRef> World::getEntities()
+Vector<EntityRef> World::getEntities()
 {
-	std::vector<EntityRef> result;
+	Vector<EntityRef> result;
 	result.reserve(entities.size());
 	for (auto& e: entities) {
 		result.emplace_back(*e, *this);
@@ -339,9 +322,9 @@ std::vector<EntityRef> World::getEntities()
 	return result;
 }
 
-std::vector<ConstEntityRef> World::getEntities() const
+Vector<ConstEntityRef> World::getEntities() const
 {
-	std::vector<ConstEntityRef> result;
+	Vector<ConstEntityRef> result;
 	result.reserve(entities.size());
 	for (auto& e : entities) {
 		result.emplace_back(*e, *this);
@@ -349,9 +332,9 @@ std::vector<ConstEntityRef> World::getEntities() const
 	return result;
 }
 
-std::vector<EntityRef> World::getTopLevelEntities()
+Vector<EntityRef> World::getTopLevelEntities()
 {
-	std::vector<EntityRef> result;
+	Vector<EntityRef> result;
 	result.reserve(entities.size());
 	for (auto& e : entities) {
 		if (e->getParent() == nullptr) {
@@ -361,9 +344,9 @@ std::vector<EntityRef> World::getTopLevelEntities()
 	return result;
 }
 
-std::vector<ConstEntityRef> World::getTopLevelEntities() const
+Vector<ConstEntityRef> World::getTopLevelEntities() const
 {
-	std::vector<ConstEntityRef> result;
+	Vector<ConstEntityRef> result;
 	result.reserve(entities.size());
 	for (auto& e : entities) {
 		if (e->getParent() == nullptr) {
@@ -399,21 +382,55 @@ ComponentDeleterTable& World::getComponentDeleterTable()
 	return *componentDeleterTable;
 }
 
-size_t World::sendSystemMessage(SystemMessageContext origContext, const String& targetSystem)
+size_t World::sendSystemMessage(SystemMessageContext origContext, const String& targetSystem, SystemMessageDestination destination)
 {
-	auto& context = pendingSystemMessages.emplace_back(std::move(origContext));
+	// Choose where to send
+	const bool amITheHost = !networkInterface || networkInterface->isHost();
+	bool sendLocal = false;
+	bool sendRemote = false;
+	switch (destination) {
+	case SystemMessageDestination::Local:
+		sendLocal = true;
+		break;
+	case SystemMessageDestination::AllClients:
+		sendLocal = true;
+		sendRemote = true;
+		break;
+	case SystemMessageDestination::Host:
+		sendLocal = amITheHost;
+		sendRemote = !amITheHost;
+		break;
+	case SystemMessageDestination::RemoteClients:
+		sendLocal = false;
+		sendRemote = true;
+		break;
+	}
 	
-	size_t count = 0;
-	for (auto& timeline: systems) {
-		for (auto& system: timeline) {
+	auto& context = pendingSystemMessages.emplace_back(std::move(origContext));
+
+	size_t systemCount = 0;
+	for (auto& timeline : systems) {
+		for (auto& system : timeline) {
 			if (system->canHandleSystemMessage(context.msgId, targetSystem)) {
-				system->receiveSystemMessage(context);
-				++count;
+				if (sendLocal) {
+					system->receiveSystemMessage(context);
+				}
+				++systemCount;
 			}
 		}
 	}
-	
-	return count;
+
+	size_t totalCount = 0;
+	if (sendLocal) {
+		totalCount += systemCount;
+	}
+
+	if (sendRemote) {
+		sendNetworkSystemMessage(targetSystem, context, destination);
+		totalCount += (destination == SystemMessageDestination::Host ? 1 : 2) * systemCount; // Assume at least two clients for non-host sends
+	}
+		
+	return totalCount;
 }
 
 bool World::isDevMode() const
@@ -497,12 +514,12 @@ void World::updateEntities()
 	HALLEY_DEBUG_TRACE();
 	size_t nEntities = entities.size();
 
-	std::vector<size_t> entitiesRemoved;
+	Vector<size_t> entitiesRemoved;
 
 	struct FamilyTodo {
-		std::vector<std::pair<FamilyMaskType, Entity*>> toAdd;
-		std::vector<std::pair<FamilyMaskType, Entity*>> toRemove;
-		std::vector<std::pair<FamilyMaskType, Entity*>> toReload;
+		Vector<std::pair<FamilyMaskType, Entity*>> toAdd;
+		Vector<std::pair<FamilyMaskType, Entity*>> toRemove;
+		Vector<std::pair<FamilyMaskType, Entity*>> toReload;
 	};
 	std::map<FamilyMaskType, FamilyTodo> pending;
 
@@ -657,13 +674,13 @@ void World::onAddFamily(Family& family) noexcept
 	familyCache.clear();
 }
 
-const std::vector<Family*>& World::getFamiliesFor(const FamilyMaskType& mask)
+const Vector<Family*>& World::getFamiliesFor(const FamilyMaskType& mask)
 {
 	auto i = familyCache.find(mask);
 	if (i != familyCache.end()) {
 		return i->second;
 	} else {
-		std::vector<Family*> result;
+		Vector<Family*> result;
 		for (auto& iter : families) {
 			auto& family = *iter;
 			FamilyMaskType famMask = family.inclusionMask;
@@ -699,10 +716,23 @@ void World::processSystemMessages(TimeLine timeline)
 	pendingSystemMessages.clear();
 }
 
-bool World::isEntityNetworkRemote(EntityId entityId)
+bool World::isEntityNetworkRemote(EntityId entityId) const
+{
+	return isEntityNetworkRemote(getEntity(entityId));
+}
+
+bool World::isEntityNetworkRemote(EntityRef entity) const
 {
 	if (networkInterface) {
-		return networkInterface->isRemote(getEntity(entityId));
+		return networkInterface->isRemote(entity);
+	}
+	return false;
+}
+
+bool World::isEntityNetworkRemote(ConstEntityRef entity) const
+{
+	if (networkInterface) {
+		return networkInterface->isRemote(entity);
 	}
 	return false;
 }
@@ -716,13 +746,33 @@ void World::sendNetworkMessage(EntityId entityId, int messageId, std::unique_ptr
 	}
 }
 
+void World::sendNetworkSystemMessage(const String& targetSystem, const SystemMessageContext& context, SystemMessageDestination destination)
+{
+	if (networkInterface) {
+		auto options = SerializerOptions(SerializerOptions::maxVersion);
+		options.world = this;
+		networkInterface->sendSystemMessage(targetSystem, context.msgId, Serializer::toBytes(*context.msg, options), destination, context.callback);
+	}
+}
+
 std::unique_ptr<Message> World::deserializeMessage(int msgId, gsl::span<const std::byte> data)
 {
 	auto msg = createMessage(msgId);
 
 	auto options = SerializerOptions(SerializerOptions::maxVersion);
 	options.world = this;
-	Deserializer::fromBytes(*msg, data);
+	Deserializer::fromBytes(*msg, data, options);
+
+	return msg;
+}
+
+std::unique_ptr<SystemMessage> World::deserializeSystemMessage(int msgId, gsl::span<const std::byte> data)
+{
+	auto msg = createSystemMessage(msgId);
+
+	auto options = SerializerOptions(SerializerOptions::maxVersion);
+	options.world = this;
+	Deserializer::fromBytes(*msg, data, options);
 
 	return msg;
 }

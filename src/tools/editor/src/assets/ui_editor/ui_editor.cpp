@@ -189,7 +189,7 @@ void UIEditor::removeWidget(const String& id)
 }
 
 ChooseUIWidgetWindow::ChooseUIWidgetWindow(UIFactory& factory, UIFactory& gameFactory, Callback callback)
-	: ChooseAssetWindow(factory, std::move(callback), false, UISizerType::Grid, 3)
+	: ChooseAssetWindow(Vector2f(), factory, std::move(callback), false)
 	, factory(factory)
 	, gameFactory(gameFactory)
 {
@@ -229,6 +229,11 @@ LocalisedString ChooseUIWidgetWindow::getItemLabel(const String& id, const Strin
 	return LocalisedString::fromUserString(label);
 }
 
-void ChooseUIWidgetWindow::sortItems(std::vector<std::pair<String, String>>& values)
+void ChooseUIWidgetWindow::sortItems(Vector<std::pair<String, String>>& values)
 {
+}
+
+int ChooseUIWidgetWindow::getNumColumns(Vector2f scrollPaneSize) const
+{
+	return 3;
 }

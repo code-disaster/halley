@@ -156,7 +156,7 @@ void UILabel::setText(LocalisedString&& t)
 void UILabel::setFutureText(Future<String> futureText)
 {
 	const auto flag = aliveFlag;
-	futureText.then(Executors::getMainThread(), [=] (const String& filtered)
+	futureText.then(Executors::getMainUpdateThread(), [=] (const String& filtered)
 	{
 		if (*flag) {
 			setText(LocalisedString::fromUserString(filtered));
@@ -164,7 +164,7 @@ void UILabel::setFutureText(Future<String> futureText)
 	});
 }
 
-void UILabel::setColourOverride(const std::vector<ColourOverride>& overrides)
+void UILabel::setColourOverride(const Vector<ColourOverride>& overrides)
 {
 	renderer.setColourOverride(overrides);
 }

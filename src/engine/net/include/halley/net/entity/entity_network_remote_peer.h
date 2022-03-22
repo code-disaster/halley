@@ -1,6 +1,6 @@
 #pragma once
 
-#include "entity_network_header.h"
+#include "entity_network_message.h"
 #include "halley/data_structures/hash_map.h"
 #include "halley/entity/entity.h"
 #include "../session/network_session.h"
@@ -14,15 +14,17 @@ namespace Halley {
     class EntityData;
 
     class EntityNetworkRemotePeer {
+        constexpr static Time maxSendInterval = 1.0;
+    	
     public:
         EntityNetworkRemotePeer(EntityNetworkSession& parent, NetworkSession::PeerId peerId);
 
         NetworkSession::PeerId getPeerId() const;
-        void sendEntities(Time t, gsl::span<const std::pair<EntityId, uint8_t>> entityIds, const EntityClientSharedData& clientData);
-        void receiveEntityPacket(NetworkSession::PeerId fromPeerId, EntityNetworkHeaderType type, InboundNetworkPacket packet);
-
-    	void destroy();
         bool isAlive() const;
+    	void destroy();
+
+    	void sendEntities(Time t, gsl::span<const std::pair<EntityId, uint8_t>> entityIds, const EntityClientSharedData& clientData);
+        void receiveNetworkMessage(NetworkSession::PeerId fromPeerId, EntityNetworkMessage msg);
 
     private:
         class OutboundEntity {
@@ -50,16 +52,20 @@ namespace Halley {
     	HashSet<EntityNetworkId> allocatedOutboundIds;
         uint16_t nextId = 0;
 
+        Time timeSinceSend = 0;
+
         uint16_t assignId();
         void sendCreateEntity(EntityRef entity);
         void sendUpdateEntity(Time t, OutboundEntity& remote, EntityRef entity);
         void sendDestroyEntity(OutboundEntity& remote);
-        size_t send(EntityNetworkHeaderType type, EntityNetworkId networkId, Bytes data);
+        void sendKeepAlive();
+        void send(EntityNetworkMessage message);
 
-        void receiveCreateEntity(EntityNetworkId id, gsl::span<const gsl::byte> data);
-        void receiveUpdateEntity(EntityNetworkId id, gsl::span<const gsl::byte> data);
-        void receiveDestroyEntity(EntityNetworkId id);
+        void receiveCreateEntity(const EntityNetworkMessageCreate& msg);
+        void receiveUpdateEntity(const EntityNetworkMessageUpdate& msg);
+        void receiveDestroyEntity(const EntityNetworkMessageDestroy& msg);
 
+        bool isRemoteReady() const;
         void onFirstDataBatchSent();
 	};
 }

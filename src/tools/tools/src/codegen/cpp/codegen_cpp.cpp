@@ -51,7 +51,7 @@ CodeGenResult CodegenCPP::generateMessage(MessageSchema message)
 	const String className = message.name + "Message";
 
 	CodeGenResult result;
-	result.emplace_back(CodeGenFile(makePath("messages", className, "h"), generateMessageHeader(message, "Message")));
+	result.emplace_back(CodeGenFile(makePath("messages", className, "h"), generateMessageHeader(message, nullptr, "Message")));
 	return result;
 }
 
@@ -60,17 +60,19 @@ CodeGenResult CodegenCPP::generateSystemMessage(SystemMessageSchema message)
 	const String className = message.name + "SystemMessage";
 
 	CodeGenResult result;
-	result.emplace_back(CodeGenFile(makePath("system_messages", className, "h"), generateMessageHeader(message, "SystemMessage")));
+	result.emplace_back(CodeGenFile(makePath("system_messages", className, "h"), generateMessageHeader(message, &message, "SystemMessage")));
 	return result;
 }
 
-CodeGenResult CodegenCPP::generateRegistry(const Vector<ComponentSchema>& componentsRaw, const Vector<SystemSchema>& systemsRaw, const Vector<MessageSchema>& messagesRaw)
+CodeGenResult CodegenCPP::generateRegistry(const Vector<ComponentSchema>& componentsRaw, const Vector<SystemSchema>& systemsRaw, const Vector<MessageSchema>& messagesRaw, const Vector<SystemMessageSchema>& systemMessagesRaw)
 {
 	auto components = componentsRaw;
 	std::sort(components.begin(), components.end());
 	auto systems = systemsRaw;
 	std::sort(systems.begin(), systems.end());
 	auto messages = messagesRaw;
+	std::sort(messages.begin(), messages.end());
+	auto systemMessages = systemMessagesRaw;
 	std::sort(messages.begin(), messages.end());
 
 	Vector<String> registryCpp {
@@ -84,6 +86,9 @@ CodeGenResult CodegenCPP::generateRegistry(const Vector<ComponentSchema>& compon
 	}
 	for (auto& msg: messages) {
 		registryCpp.emplace_back("#include \"" + getMessageFileName(msg) + "\"");
+	}
+	for (auto& msg: systemMessages) {
+		registryCpp.emplace_back("#include \"" + getSystemMessageFileName(msg) + "\"");
 	}
 	
 	registryCpp.insert(registryCpp.end(), {
@@ -139,7 +144,7 @@ CodeGenResult CodegenCPP::generateRegistry(const Vector<ComponentSchema>& compon
 	registryCpp.insert(registryCpp.end(), {
 		"",
 		"",
-		"using ComponentReflectorList = std::vector<std::unique_ptr<ComponentReflector>>;",
+		"using ComponentReflectorList = Vector<std::unique_ptr<ComponentReflector>>;",
 		"",
 		"static ComponentReflectorList makeComponentReflectors() {",
 		"	ComponentReflectorList result;"
@@ -161,7 +166,7 @@ CodeGenResult CodegenCPP::generateRegistry(const Vector<ComponentSchema>& compon
 		"",
 		"",
 		"using MessageFactory = std::function<std::unique_ptr<Halley::Message>()>;",
-		"using MessageFactoryList = std::vector<MessageFactory>;",
+		"using MessageFactoryList = Vector<MessageFactory>;",
 		"",
 		"static MessageFactoryList makeMessageFactories() {",
 		"	MessageFactoryList result;"
@@ -171,6 +176,28 @@ CodeGenResult CodegenCPP::generateRegistry(const Vector<ComponentSchema>& compon
 
 	for (auto& msg : messages) {
 		registryCpp.push_back("	result.push_back([] () { return std::make_unique<" + msg.name + "Message>(); });");
+	}
+
+	registryCpp.insert(registryCpp.end(), {
+		"	return result;",
+		"}"
+	});
+
+	// System Message factories
+	registryCpp.insert(registryCpp.end(), {
+		"",
+		"",
+		"using SystemMessageFactory = std::function<std::unique_ptr<Halley::SystemMessage>()>;",
+		"using SystemMessageFactoryList = Vector<SystemMessageFactory>;",
+		"",
+		"static SystemMessageFactoryList makeSystemMessageFactories() {",
+		"	SystemMessageFactoryList result;"
+	});
+
+	registryCpp.push_back("	result.reserve(" + toString(systemMessages.size()) + ");");
+
+	for (auto& sysMsg : systemMessages) {
+		registryCpp.push_back("	result.push_back([] () { return std::make_unique<" + sysMsg.name + "SystemMessage>(); });");
 	}
 
 	registryCpp.insert(registryCpp.end(), {
@@ -202,6 +229,11 @@ CodeGenResult CodegenCPP::generateRegistry(const Vector<ComponentSchema>& compon
 		"",
 		"	std::unique_ptr<Halley::Message> createMessage(int msgId) {",
 		"		static MessageFactoryList factories = makeMessageFactories();",
+		"		return factories.at(msgId)();",
+		"	}",
+		"",
+		"	std::unique_ptr<Halley::SystemMessage> createSystemMessage(int msgId) {",
+		"		static SystemMessageFactoryList factories = makeSystemMessageFactories();",
 		"		return factories.at(msgId)();",
 		"	}",
 		"",
@@ -248,15 +280,13 @@ Vector<String> CodegenCPP::generateComponentHeader(ComponentSchema component)
 	String deserializeBody = "using namespace Halley::EntitySerialization;" + lineBreak;
 	bool first = true;
 	for (auto& member: component.members) {
-		std::vector<String> serializationTypes;
-		if (member.canEdit) {
-			serializationTypes.push_back("Type::Prefab");
-		}
-		if (member.canSave) {
-			serializationTypes.push_back("Type::SaveData");
-		}
-		if (serializationTypes.empty()) {
+		if (member.serializationTypes.empty()) {
 			continue;
+		}
+		
+		Vector<String> serializationTypes;
+		for (auto t: member.serializationTypes) {
+			serializationTypes.push_back("Type::" + toString(t));
 		}
 		String mask = "makeMask(" + String::concatList(serializationTypes, ", ") + ")";
 		
@@ -267,8 +297,8 @@ Vector<String> CodegenCPP::generateComponentHeader(ComponentSchema component)
 			deserializeBody += lineBreak;
 		}
 
-		serializeBody += "Halley::EntityConfigNodeSerializer<decltype(" + member.name + ")>::serialize(" + member.name + ", " + CPPClassGenerator::getAnonString(member) + ", context, node, \"" + member.name + "\", " + mask + ");";
-		deserializeBody += "Halley::EntityConfigNodeSerializer<decltype(" + member.name + ")>::deserialize(" + member.name + ", " + CPPClassGenerator::getAnonString(member) + ", context, node, \"" + member.name + "\", " + mask + ");";
+		serializeBody += "Halley::EntityConfigNodeSerializer<decltype(" + member.name + ")>::serialize(" + member.name + ", " + CPPClassGenerator::getAnonString(member) + ", context, node, componentName, \"" + member.name + "\", " + mask + ");";
+		deserializeBody += "Halley::EntityConfigNodeSerializer<decltype(" + member.name + ")>::deserialize(" + member.name + ", " + CPPClassGenerator::getAnonString(member) + ", context, node, componentName, \"" + member.name + "\", " + mask + ");";
 	}
 	serializeBody += lineBreak + "return node;";
 
@@ -284,7 +314,7 @@ Vector<String> CodegenCPP::generateComponentHeader(ComponentSchema component)
 
 	// Additional constructors
 	if (!component.members.empty()) {
-		const auto serializableMembers = filter(component.members.begin(), component.members.end(), [] (const ComponentFieldSchema& m) { return m.canEdit; });
+		const auto serializableMembers = filter(component.members.begin(), component.members.end(), [] (const ComponentFieldSchema& m) { return std_ex::contains(m.serializationTypes, EntitySerialization::Type::Prefab); });
 		if (!serializableMembers.empty()) {
 			gen.addBlankLine()
 				.addConstructor(ComponentFieldSchema::toVariableSchema(serializableMembers), true);
@@ -471,20 +501,14 @@ Vector<String> CodegenCPP::generateSystemHeader(SystemSchema& system, const Hash
 			if (iter != systemMessages.end()) {
 				const auto& sysMsg = iter->second;
 
-				String functionName;
-				Vector<VariableSchema> parameters = { VariableSchema(TypeSchema(msg.name + "SystemMessage"), "msg") };
-
-				if (sysMsg.returnType == "void") {
-					functionName = "sendSystemMessageGenericVoid<decltype(msg), decltype(callback)>";
-					parameters.push_back(VariableSchema(TypeSchema("std::function<void()>"), "callback", "{}"));
-				} else {
-					functionName = "sendSystemMessageGeneric<decltype(msg), " + sysMsg.returnType + ", decltype(callback)>";
-					parameters.push_back(VariableSchema(TypeSchema("std::function<void(" + sysMsg.returnType + ")>"), "callback"));
-				}
+				Vector<VariableSchema> parameters = {
+					VariableSchema(TypeSchema(msg.name + "SystemMessage"), "msg"),
+					VariableSchema(TypeSchema("std::function<void(" + (sysMsg.returnType == "void" ? "" : sysMsg.returnType) + ")>"), "callback", "{}")
+				};
 
 				Vector<String> body;
 				body.emplace_back("String targetSystem = \"\";");
-				body.emplace_back(String(sysMsg.multicast ? "return " : "size_t n = ") + functionName + "(std::move(msg), std::move(callback), targetSystem);");
+				body.emplace_back(String(sysMsg.multicast ? "return " : "const size_t n = ") + "sendSystemMessageGeneric<decltype(msg), decltype(callback)>(std::move(msg), std::move(callback), targetSystem);");
 				if (!sysMsg.multicast) {
 					body.emplace_back("if (n != 1) {");
 					body.emplace_back("    throw Halley::Exception(\"Sending non-multicast " + sysMsg.name + "SystemMessage, but there are \" + toString(n) + \" systems receiving it (expecting exactly one).\", HalleyExceptions::Entity);");
@@ -525,7 +549,7 @@ Vector<String> CodegenCPP::generateSystemHeader(SystemSchema& system, const Hash
 	}
 
 	// Construct initBase();
-	std::vector<String> initBaseMethodBody;
+	Vector<String> initBaseMethodBody;
 	for (auto& service: system.services) {
 		initBaseMethodBody.push_back(lowerFirst(service.name) + " = &doGetWorld().template getService<" + service.name + ">(getName());");
 	}
@@ -540,8 +564,8 @@ Vector<String> CodegenCPP::generateSystemHeader(SystemSchema& system, const Hash
 
 	auto fams = convert<FamilySchema, MemberSchema>(system.families, [](auto& fam) { return MemberSchema(TypeSchema("Halley::FamilyBinding<" + upperFirst(fam.name) + "Family>"), fam.name + "Family"); });
 	auto mid = fams.begin() + std::min(fams.size(), size_t(1));
-	std::vector<MemberSchema> mainFams(fams.begin(), mid);
-	std::vector<MemberSchema> otherFams(mid, fams.end());
+	Vector<MemberSchema> mainFams(fams.begin(), mid);
+	Vector<MemberSchema> otherFams(mid, fams.end());
 	sysClassGen
 		.addBlankLine()
 		.setAccessLevel(system.strategy == SystemStrategy::Global ? MemberAccess::Protected : MemberAccess::Private)
@@ -556,36 +580,53 @@ Vector<String> CodegenCPP::generateSystemHeader(SystemSchema& system, const Hash
 	if (hasReceiveEntityMessage) {
 		sysClassGen.setAccessLevel(MemberAccess::Public);
 		
-		Vector<String> body = { "switch (msgIndex) {" };
+		Vector<String> onMessagesReceivedBody = { "switch (msgIndex) {" };
+		Vector<String> processMessagesBody;
+		HashMap<String, Vector<String>> familiesReceived;
+		
 		for (auto& msg : system.messages) {
 			if (msg.receive) {
-				body.emplace_back("case " + msg.name + "Message::messageIndex: onMessagesReceived(reinterpret_cast<" + msg.name + "Message**>(msgs), idx, n); break;");
+				onMessagesReceivedBody.emplace_back("case " + msg.name + "Message::messageIndex: onMessagesReceived(reinterpret_cast<" + msg.name + "Message**>(msgs), idx, n, reinterpret_cast<Halley::FamilyBinding<" + upperFirst(msg.family) + "Family>&>(family)); break;");
 
 				sysClassGen
 					.addMethodDeclaration(MethodSchema(TypeSchema("void"), {
 						VariableSchema(TypeSchema(msg.name + "Message&", true), "msg"),
-						VariableSchema(TypeSchema("MainFamily&"), "e")
+						VariableSchema(TypeSchema(upperFirst(msg.family) + "Family&"), "e")
 					}, "onMessageReceived", false, true, false, false, false, true))
 					.addBlankLine();
+
+				familiesReceived[msg.family].push_back(msg.name + "Message::messageIndex");
 			}
 		}
-		body.emplace_back("}");
+		onMessagesReceivedBody.emplace_back("}");
+
+		for (const auto& [familyName, msgIds]: familiesReceived) {
+			processMessagesBody.push_back("doProcessMessages(" + familyName + "Family, std::array<int, " + toString(msgIds.size()) + ">{ " + toString(msgIds) + " });");
+		}
 
 		sysClassGen
 			.setAccessLevel(MemberAccess::Private)
+			.addMethodDefinition(MethodSchema(TypeSchema("void"), {}, "processMessages", false, false, true, true), processMessagesBody)
+			.addBlankLine();
+
+		sysClassGen
 			.addMethodDefinition(MethodSchema(TypeSchema("void"), {
 				VariableSchema(TypeSchema("int"), "msgIndex"),
 				VariableSchema(TypeSchema("Halley::Message**"), "msgs"),
 				VariableSchema(TypeSchema("size_t*"), "idx"),
-				VariableSchema(TypeSchema("size_t"), "n")
-			}, "onMessagesReceived", false, false, true, true), body)
-			.addBlankLine()
-			.addLine("template <typename M>")
+				VariableSchema(TypeSchema("size_t"), "n"),
+				VariableSchema(TypeSchema("Halley::FamilyBindingBase&"), "family")
+				}, "onMessagesReceived", false, false, true, true), onMessagesReceivedBody)
+			.addBlankLine();
+
+		sysClassGen
+			.addLine("template <typename M, typename F>")
 			.addMethodDefinition(MethodSchema(TypeSchema("void"), {
 				VariableSchema(TypeSchema("M**"), "msgs"),
 				VariableSchema(TypeSchema("size_t*"), "idx"),
-				VariableSchema(TypeSchema("size_t"), "n")
-			}, "onMessagesReceived"), "for (size_t i = 0; i < n; i++) static_cast<T*>(this)->onMessageReceived(*msgs[i], mainFamily[idx[i]]);")
+				VariableSchema(TypeSchema("size_t"), "n"),
+				VariableSchema(TypeSchema("F&"), "family")
+			}, "onMessagesReceived"), "for (size_t i = 0; i < n; i++) static_cast<T*>(this)->onMessageReceived(*msgs[i], family[idx[i]]);")
 			.addBlankLine();
 	}
 
@@ -594,7 +635,7 @@ Vector<String> CodegenCPP::generateSystemHeader(SystemSchema& system, const Hash
 		canReceiveBody.emplace_back("if (!targetSystem.isEmpty() && targetSystem != getName()) return false;");
 		canReceiveBody.emplace_back("switch (msgIndex) {");
 
-		Vector<String> onReceivedBody = { "switch (msgIndex) {" };
+		Vector<String> onReceivedBody = { "switch (context.msgId) {" };
 
 		sysClassGen.setAccessLevel(MemberAccess::Public);
 		for (auto& msg : system.systemMessages) {
@@ -603,17 +644,23 @@ Vector<String> CodegenCPP::generateSystemHeader(SystemSchema& system, const Hash
 				String resultVar = sysMsg.returnType == "void" ? "" : "auto result = ";
 				
 				onReceivedBody.emplace_back("case " + msg.name + "SystemMessage::messageIndex: {");
-				onReceivedBody.emplace_back("    auto& realMsg = reinterpret_cast<" + msg.name + "SystemMessage&>(msg);");
+				onReceivedBody.emplace_back("    auto& realMsg = reinterpret_cast<" + msg.name + "SystemMessage&>(*context.msg);");
 				if (sysMsg.multicast) {
 					onReceivedBody.emplace_back("    " + resultVar + "static_cast<T*>(this)->onMessageReceived(realMsg);");
 				} else {
 					onReceivedBody.emplace_back("    " + resultVar + "static_cast<T*>(this)->onMessageReceived(std::move(realMsg));");
 				}
+				onReceivedBody.emplace_back("    if (context.callback) {");
 				if (sysMsg.returnType == "void") {
-					onReceivedBody.emplace_back("    callback(nullptr);");
+					onReceivedBody.emplace_back("        context.callback(nullptr, {});");
 				} else {
-					onReceivedBody.emplace_back("    callback(reinterpret_cast<std::byte*>(&result));");
+					onReceivedBody.emplace_back("        if (context.remote) {");
+					onReceivedBody.emplace_back("            context.callback(nullptr, Serializer::toBytes(result, SerializerOptions(SerializerOptions::maxVersion)));");
+					onReceivedBody.emplace_back("        } else {");
+					onReceivedBody.emplace_back("            context.callback(reinterpret_cast<std::byte*>(&result), {});");
+					onReceivedBody.emplace_back("        }");
 				}
+				onReceivedBody.emplace_back("    }");
 				onReceivedBody.emplace_back("    break;");
 				onReceivedBody.emplace_back("}");
 
@@ -634,9 +681,7 @@ Vector<String> CodegenCPP::generateSystemHeader(SystemSchema& system, const Hash
 		sysClassGen
 			.setAccessLevel(MemberAccess::Private)
 			.addMethodDefinition(MethodSchema(TypeSchema("void"), {
-				VariableSchema(TypeSchema("int"), "msgIndex"),
-				VariableSchema(TypeSchema("Halley::SystemMessage&"), "msg"),
-				VariableSchema(TypeSchema("std::function<void(std::byte*)>&", true), "callback")
+				VariableSchema(TypeSchema("Halley::SystemMessageContext&", true), "context"),
 			}, "onSystemMessageReceived", false, false, true, true), onReceivedBody)
 			.addMethodDefinition(MethodSchema(TypeSchema("bool"), {
 				VariableSchema(TypeSchema("int"), "msgIndex"),
@@ -675,7 +720,7 @@ Vector<String> CodegenCPP::generateSystemStub(SystemSchema& system) const
 		if (msg.receive) {
 			actualSys
 				.addBlankLine()
-				.addMethodDefinition(MethodSchema(TypeSchema("void"), { VariableSchema(TypeSchema(msg.name + "Message&", true), "msg"), VariableSchema(TypeSchema("MainFamily&"), "entity") }, "onMessageReceived"), "// TODO");
+				.addMethodDefinition(MethodSchema(TypeSchema("void"), { VariableSchema(TypeSchema(msg.name + "Message&", true), "msg"), VariableSchema(TypeSchema(upperFirst(msg.family) + "Family&"), "entity") }, "onMessageReceived"), "// TODO");
 		}
 	}
 
@@ -692,7 +737,7 @@ Vector<String> CodegenCPP::generateSystemStub(SystemSchema& system) const
 	return contents;
 }
 
-Vector<String> CodegenCPP::generateMessageHeader(const MessageSchema& message, const String& suffix)
+Vector<String> CodegenCPP::generateMessageHeader(const MessageSchema& message, const SystemMessageSchema* sysMessage, const String& suffix)
 {
 	Vector<String> contents = {
 		"#pragma once",
@@ -707,8 +752,16 @@ Vector<String> CodegenCPP::generateMessageHeader(const MessageSchema& message, c
 	contents.push_back("");
 
 	auto gen = CPPClassGenerator(message.name + suffix, "Halley::" + suffix, MemberAccess::Public, true)
-		.setAccessLevel(MemberAccess::Public)
-		.addMember(MemberSchema(TypeSchema("int", false, true, true), "messageIndex", toString(message.id)))
+		.setAccessLevel(MemberAccess::Public);
+
+	gen.addMember(MemberSchema(TypeSchema("int", false, true, true), "messageIndex", toString(message.id)));
+
+	if (sysMessage) {
+		gen.addMember(MemberSchema(TypeSchema("Halley::SystemMessageDestination", false, true, true), "messageDestination", "Halley::SystemMessageDestination::" + upperFirst(toString(sysMessage->destination))))
+			.addLine("using ReturnType = " + sysMessage->returnType + ";");
+	}
+
+	gen
 		.addBlankLine()
 		.addMembers(message.members)
 		.addBlankLine()
@@ -800,4 +853,9 @@ String CodegenCPP::getComponentFileName(const ComponentSchema& component) const
 String CodegenCPP::getMessageFileName(const MessageSchema& message) const
 {
 	return "messages/" + toFileName(message.name + "Message") + ".h";
+}
+
+String CodegenCPP::getSystemMessageFileName(const SystemMessageSchema& message) const
+{
+	return "system_messages/" + toFileName(message.name + "SystemMessage") + ".h";
 }

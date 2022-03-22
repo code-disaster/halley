@@ -24,17 +24,20 @@ namespace Halley
 		{
 			int written = 0;
 			int skipped = 0;
-			std::vector<Path> files;
+			Vector<Path> files;
 		};
 
 	public:
+		constexpr static int currentCodegenVersion = 105;
+		
 		using ProgressReporter = std::function<bool(float, String)>;
 
 		static void run(Path inDir, Path outDir);
-		static std::vector<Path> generateCode(const ECSData& data, Path directory);
+		static Vector<Path> generateCode(const ECSData& data, Path directory);
 
 	private:
-		static bool writeFile(Path path, const char* data, size_t dataSize, bool stub);
-		static void writeFiles(Path directory, const CodeGenResult& files, Stats& stats);
+		static bool writeFile(const Path& path, gsl::span<const char> data, bool stub);
+		static void writeFiles(const Path& directory, const CodeGenResult& files, Stats& stats);
+		static int getHeaderVersion(gsl::span<const char> data, size_t& endOfHeader);
 	};
 }

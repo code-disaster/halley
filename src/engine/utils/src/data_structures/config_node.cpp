@@ -854,22 +854,22 @@ const ConfigNode& ConfigNode::operator[](size_t idx) const
 	return asSequence().at(idx);
 }
 
-std::vector<ConfigNode>::iterator ConfigNode::begin()
+Vector<ConfigNode>::iterator ConfigNode::begin()
 {
 	return asSequence().begin();
 }
 
-std::vector<ConfigNode>::iterator ConfigNode::end()
+Vector<ConfigNode>::iterator ConfigNode::end()
 {
 	return asSequence().end();
 }
 
-std::vector<ConfigNode>::const_iterator ConfigNode::begin() const
+Vector<ConfigNode>::const_iterator ConfigNode::begin() const
 {
 	return asSequence().begin();
 }
 
-std::vector<ConfigNode>::const_iterator ConfigNode::end() const
+Vector<ConfigNode>::const_iterator ConfigNode::end() const
 {
 	return asSequence().end();
 }
@@ -1231,7 +1231,7 @@ ConfigNode ConfigNode::createMapDelta(const ConfigNode& from, const ConfigNode& 
 
 ConfigNode ConfigNode::createSequenceDelta(const ConfigNode& from, const ConfigNode& to, const BreadCrumb& breadCrumb, const IDeltaCodeHints* hints)
 {
-	auto tryExtend = [] (std::vector<ConfigNode>& seq, int idx) -> bool
+	auto tryExtend = [] (Vector<ConfigNode>& seq, int idx) -> bool
 	{
 		if (seq.empty() || seq.back().getType() != ConfigNodeType::Idx) {
 			return false;
@@ -1297,7 +1297,7 @@ ConfigNode ConfigNode::createSequenceDelta(const ConfigNode& from, const ConfigN
 	// Check if it's just a permutation of the old data
 	if (!hasNewData && refCount == fromSeq.size()) {
 		if (hints && !hints->doesSequenceOrderMatter(breadCrumb)) {
-			std::vector<char> matches(fromSeq.size(), 0);
+			Vector<char> matches(fromSeq.size(), 0);
 			for (const auto& e: resultSeq) {
 				const auto range = e.asVector2i();
 				for (int i = range.x; i < range.x + range.y; ++i) {

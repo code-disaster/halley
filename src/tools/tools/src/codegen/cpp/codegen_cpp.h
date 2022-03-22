@@ -15,17 +15,18 @@ namespace Halley
 		CodeGenResult generateMessage(MessageSchema message) override;
 		CodeGenResult generateSystemMessage(SystemMessageSchema message) override;
 
-		CodeGenResult generateRegistry(const Vector<ComponentSchema>& components, const Vector<SystemSchema>& systems, const Vector<MessageSchema>& messagesRaw) override;
+		CodeGenResult generateRegistry(const Vector<ComponentSchema>& components, const Vector<SystemSchema>& systems, const Vector<MessageSchema>& messagesRaw, const Vector<SystemMessageSchema>& systemMessagesRaw) override;
 
 	private:
 		Vector<String> generateComponentHeader(ComponentSchema component);
 		Vector<String> generateSystemHeader(SystemSchema& system, const HashMap<String, ComponentSchema>& components, const HashMap<String, SystemMessageSchema>& systemMessages) const;
 		Vector<String> generateSystemStub(SystemSchema& system) const;
-		Vector<String> generateMessageHeader(const MessageSchema& message, const String& suffix);
+		Vector<String> generateMessageHeader(const MessageSchema& message, const SystemMessageSchema* sysMessage, const String& suffix);
 
 		Path makePath(Path dir, String className, String extension) const;
 		String toFileName(String className) const;
 		String getComponentFileName(const ComponentSchema& component) const;
 		String getMessageFileName(const MessageSchema& message) const;
+		String getSystemMessageFileName(const SystemMessageSchema& message) const;
 	};
 }

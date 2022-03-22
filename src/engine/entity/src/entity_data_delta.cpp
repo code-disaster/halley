@@ -2,9 +2,11 @@
 
 #include <cassert>
 
+#include "data_interpolator.h"
 #include "entity_data.h"
 
 #include "halley/bytes/byte_serializer.h"
+#include "halley/file_formats/yaml_convert.h"
 #include "halley/support/logger.h"
 
 using namespace Halley;
@@ -80,8 +82,14 @@ EntityDataDelta::EntityDataDelta(const EntityData& from, const EntityData& to, c
 		if (options.ignoreComponents.find(compId) == options.ignoreComponents.end()) {
 			const auto fromIter = std::find_if(from.components.begin(), from.components.end(), [&] (const auto& e) { return e.first == toComponent.first; });
 			if (fromIter != from.components.end()) {
-				// Potentially modified
-				auto delta = ConfigNode::createDelta(fromIter->second, toComponent.second);
+				// Potentially modified, compute delta
+				ConfigNode delta;
+				if (options.interpolatorSet) {
+					delta = options.interpolatorSet->createComponentDelta(from.getInstanceUUID(), fromIter->first, fromIter->second, toComponent.second);
+				} else {
+					delta = ConfigNode::createDelta(fromIter->second, toComponent.second);
+				}
+				
 				if (delta.getType() == ConfigNodeType::DeltaMap && !delta.asMap().empty()) {
 					if (options.deltaComponents) {
 						componentsChanged.emplace_back(toComponent.first, std::move(delta));
@@ -189,9 +197,25 @@ void EntityDataDelta::deserialize(Deserializer& s)
 	decodeOptField(flags, FieldId::Flags);
 }
 
+void EntityDataDelta::setInstanceUUID(const UUID& uuid)
+{
+	instanceUUID = uuid;
+}
+
 void EntityDataDelta::setPrefabUUID(const UUID& uuid)
 {
 	prefabUUID = uuid;
+}
+
+void EntityDataDelta::randomiseInstanceUUIDs()
+{
+	instanceUUID = UUID::generate();
+	for (auto& c: childrenAdded) {
+		c.randomiseInstanceUUIDs();
+	}
+	for (auto& c: childrenChanged) {
+		c.second.randomiseInstanceUUIDs();
+	}
 }
 
 bool EntityDataDelta::isSimpleDelta() const
@@ -245,6 +269,86 @@ bool EntityDataDelta::modifiesTheSameAs(const EntityDataDelta& other) const
 	return getComponentEmptyStructure() == other.getComponentEmptyStructure();
 }
 
+ConfigNode EntityDataDelta::toConfigNode() const
+{
+	ConfigNode::MapType result;
+
+	if (name) {
+		result["name"] = name.value();
+	}
+	if (prefab) {
+		result["prefab"] = prefab.value();
+	}
+	if (icon) {
+		result["icon"] = icon.value();
+	}
+	if (instanceUUID) {
+		result["uuid"] = instanceUUID->toString();
+	}
+	if (prefabUUID) {
+		result["prefabUUID"] = prefabUUID->toString();
+	}
+	if (parentUUID) {
+		result["parent"] = parentUUID->toString();
+	}
+	if (flags) {
+		result["flags"] = static_cast<int>(flags.value());
+	}
+
+	if (!componentsChanged.empty()) {
+		ConfigNode::SequenceType compNodes;
+		for (const auto& comp: componentsChanged) {
+			ConfigNode::MapType entry;
+			entry[comp.first] = ConfigNode(comp.second);
+			compNodes.emplace_back(std::move(entry));
+		}
+		result["componentsChanged"] = std::move(compNodes);
+	}
+
+	if (!componentsRemoved.empty()) {
+		result["componentsRemoved"] = componentsRemoved;
+	}
+
+	if (!componentOrder.empty()) {
+		result["componentOrder"] = componentOrder;
+	}
+
+	if (!childrenAdded.empty()) {
+		ConfigNode::SequenceType childNodes;
+		for (const auto& child: childrenAdded) {
+			childNodes.emplace_back(child.toConfigNode(true));
+		}
+		result["childrenAdded"] = std::move(childNodes);
+	}
+
+	if (!childrenChanged.empty()) {
+		ConfigNode::SequenceType childNodes;
+		for (const auto& child: childrenChanged) {
+			ConfigNode::MapType entry;
+			entry[toString(child.first)] = ConfigNode(child.second.toConfigNode());
+			childNodes.emplace_back(std::move(entry));
+		}
+		result["childrenChanged"] = std::move(childNodes);
+	}
+
+	if (!childrenRemoved.empty()) {
+		result["childrenRemoved"] = childrenRemoved;
+	}
+
+	if (!childrenOrder.empty()) {
+		result["childrenOrder"] = childrenOrder;
+	}
+	
+	return ConfigNode(std::move(result));
+}
+
+String EntityDataDelta::toYAML() const
+{
+	YAMLConvert::EmitOptions options;
+	options.mapKeyOrder = {{ "name", "prefab", "icon", "flags", "uuid", "prefabUUID", "parent", "components", "children" }};
+	return YAMLConvert::generateYAML(toConfigNode(), options);
+}
+
 static ConfigNode getEmptyConfigNodeStructure(const ConfigNode& node)
 {
 	if (node.getType() == ConfigNodeType::Map || node.getType() == ConfigNodeType::DeltaMap) {
@@ -264,9 +368,9 @@ static ConfigNode getEmptyConfigNodeStructure(const ConfigNode& node)
 	return ConfigNode();
 }
 
-std::vector<std::pair<String, ConfigNode>> EntityDataDelta::getComponentEmptyStructure() const
+Vector<std::pair<String, ConfigNode>> EntityDataDelta::getComponentEmptyStructure() const
 {
-	std::vector<std::pair<String, ConfigNode>> result;
+	Vector<std::pair<String, ConfigNode>> result;
 
 	for (const auto& c: componentsChanged) {
 		result.emplace_back(c.first, getEmptyConfigNodeStructure(c.second));
@@ -335,7 +439,7 @@ void SceneDataDelta::addEntity(UUID entityId, EntityDataDelta delta)
 	entities.emplace_back(std::move(entityId), std::move(delta));
 }
 
-const std::vector<std::pair<UUID, EntityDataDelta>>& SceneDataDelta::getEntities() const
+const Vector<std::pair<UUID, EntityDataDelta>>& SceneDataDelta::getEntities() const
 {
 	return entities;
 }

@@ -3,15 +3,18 @@ project (halley-net)
 include_directories(${Boost_INCLUDE_DIR} "include" "include/halley/net" "../core/include" "../utils/include" "../entity/include")
 
 set(SOURCES
+        "src/connection/ack_unreliable_connection.cpp"
+        "src/connection/ack_unreliable_connection_stats.cpp"
         "src/connection/http.cpp"
         "src/connection/instability_simulator.cpp"
         "src/connection/message_queue.cpp"
         "src/connection/message_queue_tcp.cpp"
         "src/connection/message_queue_udp.cpp"
+        "src/connection/network_message.cpp"
         "src/connection/network_packet.cpp"
         "src/connection/network_service.cpp"
-        "src/connection/reliable_connection.cpp"
 
+        "src/entity/entity_network_message.cpp"
         "src/entity/entity_network_remote_peer.cpp"
         "src/entity/entity_network_session.cpp"
 
@@ -23,6 +26,8 @@ set(SOURCES
 set(HEADERS
         "include/halley/net/halley_net.h"
 
+        "include/halley/net/connection/ack_unreliable_connection.h"
+        "include/halley/net/connection/ack_unreliable_connection_stats.h"
         "include/halley/net/connection/http.h"
         "include/halley/net/connection/iconnection.h"
         "include/halley/net/connection/imessage_stream.h"
@@ -33,10 +38,9 @@ set(HEADERS
         "include/halley/net/connection/network_message.h"
         "include/halley/net/connection/network_packet.h"
         "include/halley/net/connection/network_service.h"
-        "include/halley/net/connection/reliable_connection.h"
         "include/halley/net/connection/standard_message_stream.h"
 
-        "include/halley/net/entity/entity_network_header.h"
+        "include/halley/net/entity/entity_network_message.h"
         "include/halley/net/entity/entity_network_remote_peer.h"
         "include/halley/net/entity/entity_network_session.h"
 

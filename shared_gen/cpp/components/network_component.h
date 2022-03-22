@@ -1,3 +1,4 @@
+// Halley codegen version 101
 #pragma once
 
 #ifndef DONT_INCLUDE_HALLEY_HPP
@@ -10,6 +11,7 @@ public:
 	static const constexpr char* componentName{ "Network" };
 
 	std::optional<uint8_t> ownerId{};
+	Halley::DataInterpolatorSet dataInterpolatorSet{};
 
 	NetworkComponent() {
 	}

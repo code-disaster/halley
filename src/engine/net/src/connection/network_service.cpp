@@ -1,9 +1,13 @@
 #include "connection/network_service.h"
 
+#include "halley/maths/vector2.h"
+
 using namespace Halley;
 
 std::shared_ptr<IConnection> NetworkService::Acceptor::accept()
 {
+	auto v = quantize(Vector2f(0, 1), 0.5f);
+	
 	if (!choiceMade) {
 		choiceMade = true;
 		return doAccept();
@@ -29,11 +33,16 @@ void NetworkServiceWithStats::onUpdateStats()
 {
 }
 
+Time NetworkServiceWithStats::getStatUpdateInterval() const
+{
+	return 1.0;
+}
+
 void NetworkServiceWithStats::update(Time t)
 {
 	statsTime += t;
-	if (statsTime > 1.0) {
-		statsTime -= 1.0;
+	if (statsTime > getStatUpdateInterval()) {
+		statsTime = 0;
 
 		onUpdateStats();
 		

@@ -61,7 +61,7 @@ EntityData EntityFactory::serializeEntity(EntityRef entity, const SerializationO
 	const auto serializeContext = std::make_shared<EntityFactoryContext>(world, resources, EntitySerialization::makeMask(options.type), false);
 	for (auto [componentId, component]: entity) {
 		auto& reflector = getComponentReflector(componentId);
-		result.getComponents().emplace_back(reflector.getName(), reflector.serialize(serializeContext->getConfigNodeContext(), *component));
+		result.getComponents().emplace_back(reflector.getName(), reflector.serialize(serializeContext->getEntitySerializationContext(), *component));
 	}
 
 	// Children
@@ -136,16 +136,17 @@ std::shared_ptr<const Prefab> EntityFactory::getPrefab(std::optional<EntityRef> 
 	}
 }
 
-EntityFactoryContext::EntityFactoryContext(World& world, Resources& resources, int entitySerializationMask, bool update, std::shared_ptr<const Prefab> _prefab, const IEntityData* origEntityData, EntityScene* scene, EntityFactoryContext* parent)
+EntityFactoryContext::EntityFactoryContext(World& world, Resources& resources, int entitySerializationMask, bool update, std::shared_ptr<const Prefab> _prefab, const IEntityData* origEntityData, EntityScene* scene, EntityFactoryContext* parent, IDataInterpolatorSetRetriever* interpolators)
 	: world(&world)
 	, scene(scene)
 	, parent(parent)
 	, update(update)
 {
 	prefab = std::move(_prefab);
-	configNodeContext.resources = &resources;
-	configNodeContext.entityContext = this;
-	configNodeContext.entitySerializationTypeMask = entitySerializationMask;
+	entitySerializationContext.resources = &resources;
+	entitySerializationContext.entityContext = this;
+	entitySerializationContext.entitySerializationTypeMask = entitySerializationMask;
+	entitySerializationContext.interpolators = interpolators;
 	worldPartition = scene ? scene->getWorldPartition() : 0;
 
 	if (origEntityData) {
@@ -222,6 +223,16 @@ void EntityFactoryContext::setWorldPartition(uint8_t partition)
 	worldPartition = partition;
 }
 
+void EntityFactoryContext::setCurrentEntity(EntityRef entity)
+{
+	curEntity = entity;
+}
+
+EntityRef EntityFactoryContext::getCurrentEntity() const
+{
+	return curEntity;
+}
+
 void EntityFactoryContext::setEntityData(const IEntityData& iData)
 {
 	if (prefab) {
@@ -256,16 +267,16 @@ EntityRef EntityFactory::createEntity(const EntityData& data, EntityRef parent, 
 	return entity;
 }
 
-void EntityFactory::updateEntity(EntityRef& entity, const IEntityData& data, int serializationMask, EntityScene* scene)
+void EntityFactory::updateEntity(EntityRef& entity, const IEntityData& data, int serializationMask, EntityScene* scene, IDataInterpolatorSetRetriever* interpolators)
 {
 	Expects(entity.isValid());
-	const auto context = makeContext(data, entity, scene, true, serializationMask);
+	const auto context = makeContext(data, entity, scene, true, serializationMask, nullptr, interpolators);
 	updateEntityNode(context->getRootEntityData(), entity, {}, context);
 }
 
-std::shared_ptr<EntityFactoryContext> EntityFactory::makeContext(const IEntityData& data, std::optional<EntityRef> existing, EntityScene* scene, bool updateContext, int serializationMask, EntityFactoryContext* parent)
+std::shared_ptr<EntityFactoryContext> EntityFactory::makeContext(const IEntityData& data, std::optional<EntityRef> existing, EntityScene* scene, bool updateContext, int serializationMask, EntityFactoryContext* parent, IDataInterpolatorSetRetriever* interpolators)
 {
-	auto context = std::make_shared<EntityFactoryContext>(world, resources, serializationMask, updateContext, getPrefab(existing, data), &data, scene, parent);
+	auto context = std::make_shared<EntityFactoryContext>(world, resources, serializationMask, updateContext, getPrefab(existing, data), &data, scene, parent, interpolators);
 
 	if (existing) {
 		context->notifyEntity(existing.value());
@@ -293,6 +304,8 @@ void EntityFactory::updateEntityNode(const IEntityData& iData, EntityRef entity,
 		entity.setParent(parent.value());
 	}
 
+	context->setCurrentEntity(entity);
+
 	if (iData.isDelta()) {
 		const auto& delta = iData.asEntityDataDelta();
 		if (delta.getName()) {
@@ -315,7 +328,8 @@ void EntityFactory::updateEntityNode(const IEntityData& iData, EntityRef entity,
 		updateEntityChildren(entity, data, context);
 	}
 
-	//context->notifyEntity(entity);
+	// Don't keep a lingering reference
+	context->setCurrentEntity(EntityRef());
 }
 
 void EntityFactory::updateEntityComponents(EntityRef entity, const EntityData& data, const EntityFactoryContext& context)
@@ -333,7 +347,7 @@ void EntityFactory::updateEntityComponents(EntityRef entity, const EntityData& d
 		}
 	} else {
 		// Store the existing ids
-		std::vector<int> existingComps;
+		Vector<int> existingComps;
 		for (auto& c: entity) {
 			existingComps.push_back(c.first);
 		}
@@ -362,7 +376,8 @@ void EntityFactory::updateEntityComponentsDelta(EntityRef entity, const EntityDa
 	const auto& func = world.getCreateComponentFunction();
 
 	for (const auto& [componentName, componentData]: delta.getComponentsChanged()) {
-		func(context, componentName, entity, componentData);
+		auto overriden = getComponentsWithPrefabDefaults(entity, context, componentData, componentName);		
+		func(context, componentName, entity, overriden ? *overriden : componentData);
 	}
 
 	for (const auto& componentName: delta.getComponentsRemoved()) {
@@ -370,12 +385,38 @@ void EntityFactory::updateEntityComponentsDelta(EntityRef entity, const EntityDa
 	}
 }
 
+std::optional<ConfigNode> EntityFactory::getComponentsWithPrefabDefaults(EntityRef entity, const EntityFactoryContext& context, const ConfigNode& componentData, const String& componentName)
+{
+	std::optional<ConfigNode> result;
+
+	if (componentData.getType() == ConfigNodeType::Map || componentData.getType() == ConfigNodeType::DeltaMap) {
+		for (const auto& entry: componentData.asMap()) {
+			if (entry.second.getType() == ConfigNodeType::Del) {
+				if (const auto & prefab = context.getPrefab(); prefab) {
+					if (const auto * prefabData = prefab->getEntityData().tryGetPrefabUUID(entity.getPrefabUUID()); prefabData) {
+						const auto& fieldName = entry.first;
+
+						if (auto& data = prefabData->getFieldData(componentName, fieldName); data.getType() != ConfigNodeType::Undefined) {
+							if (!result) {
+								result = componentData;
+							}
+							(*result)[fieldName] = data;
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return result;
+}
+
 void EntityFactory::updateEntityChildren(EntityRef entity, const EntityData& data, const std::shared_ptr<EntityFactoryContext>& context)
 {
 	if (!entity.getRawChildren().empty()) {
 		// Delete old children that are no longer present
 		const auto& newChildren = data.getChildren();
-		std::vector<EntityRef> toDelete;
+		Vector<EntityRef> toDelete;
 		for (auto c: entity.getChildren()) {
 			const auto& uuid = c.getInstanceUUID();
 			if (!std_ex::contains_if(newChildren, [&] (const EntityData& c) { return c.getInstanceUUID() == uuid; })) {
@@ -390,7 +431,7 @@ void EntityFactory::updateEntityChildren(EntityRef entity, const EntityData& dat
 	// Update children
 	for (const auto& child: data.getChildren()) {
 		if (context->needsNewContextFor(child)) {
-			const auto newContext = makeContext(child, entity, context->getScene(), context->isUpdateContext(), context->getConfigNodeContext().entitySerializationTypeMask, context.get());
+			const auto newContext = makeContext(child, entity, context->getScene(), context->isUpdateContext(), context->getEntitySerializationContext().entitySerializationTypeMask, context.get());
 			updateEntityNode(newContext->getRootEntityData(), getEntity(child.getInstanceUUID(), *newContext, false), entity, newContext);
 		} else {
 			updateEntityNode(child, getEntity(child.getInstanceUUID(), *context, false), entity, context);
@@ -398,7 +439,7 @@ void EntityFactory::updateEntityChildren(EntityRef entity, const EntityData& dat
 	}
 
 	// Ensure children order
-	std::vector<UUID> childInstanceUUIDs;
+	Vector<UUID> childInstanceUUIDs;
 	childInstanceUUIDs.reserve(data.getChildren().size());
 	for (const auto& child: data.getChildren()) {
 		childInstanceUUIDs.push_back(child.getInstanceUUID());
@@ -408,7 +449,7 @@ void EntityFactory::updateEntityChildren(EntityRef entity, const EntityData& dat
 
 void EntityFactory::updateEntityChildrenDelta(EntityRef entity, const EntityDataDelta& delta, const std::shared_ptr<EntityFactoryContext>& context)
 {
-	std::vector<EntityRef> toDelete;
+	Vector<EntityRef> toDelete;
 	for (auto child: entity.getChildren()) {
 		if (std_ex::contains(delta.getChildrenRemoved(), child.getInstanceUUID())) {
 			toDelete.emplace_back(child);
@@ -505,7 +546,7 @@ std::pair<EntityRef, std::optional<UUID>> EntityFactory::loadEntityDelta(const E
 {
 	std::optional<UUID> parentUUID;
 	
-	const UUID& uuid = uuidSrc.value_or(UUID::generate());
+	const UUID& uuid = uuidSrc.value_or(delta.getInstanceUUID().value_or(UUID::generate()));
 	EntityRef entity = uuidSrc ? getWorld().findEntity(uuid, true).value_or(EntityRef()) : EntityRef();
 	
 	if (entity.isValid() && entity.getPrefabAssetId() == delta.getPrefab()) {

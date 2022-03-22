@@ -19,7 +19,12 @@ bool SystemMessageBridge::isValid() const
 
 void SystemMessageBridge::sendMessageToEntity(EntityId target, int msgId, gsl::span<const gsl::byte> data)
 {
-	system->sendRawMessage(target, msgId, data);
+	system->sendEntityMessageFromNetwork(target, msgId, data);
+}
+
+void SystemMessageBridge::sendMessageToSystem(const String& targetSystem, int messageType, gsl::span<const std::byte> data, SystemMessageCallback callback)
+{
+	system->sendSystemMessageFromNetwork(targetSystem, messageType, data, std::move(callback));
 }
 
 System::System(Vector<FamilyBindingBase*> uninitializedFamilies, Vector<int> messageTypesReceived)
@@ -72,35 +77,36 @@ void System::purgeMessages()
 
 void System::processMessages()
 {
+}
+
+void System::doProcessMessages(FamilyBindingBase& family, gsl::span<const int> typesAccepted)
+{
 	// This whole method is probably very inefficient.
 	struct MessageBox
 	{
 		Vector<Message*> msg;
 		Vector<size_t> elemIdx;
 	};
-	FlatMap<int, MessageBox> inboxes;
+	HashMap<int, MessageBox> inboxes;
 
-	if (!families.empty()) {
-		auto& fam = *families[0];
-		size_t sz = fam.count();
-		for (size_t i = 0; i < sz; i++) {
-			FamilyBase* elem = reinterpret_cast<FamilyBase*>(fam.getElement(i));
-			Entity* entity = world->tryGetRawEntity(elem->entityId);
-			if (entity) {
-				for (const auto& msg: entity->inbox) {
-					if (std::find(messageTypesReceived.begin(), messageTypesReceived.end(), msg.type) != messageTypesReceived.end()) {
-						auto& inbox = inboxes[msg.type];
-						inbox.msg.emplace_back(msg.msg.get());
-						inbox.elemIdx.emplace_back(i);
-					}
+	const size_t sz = family.count();
+	for (size_t i = 0; i < sz; i++) {
+		const FamilyBase* elem = static_cast<FamilyBase*>(family.getElement(i));
+		const Entity* entity = world->tryGetRawEntity(elem->entityId);
+		if (entity) {
+			for (const auto& msg: entity->inbox) {
+				if (std::find(typesAccepted.begin(), typesAccepted.end(), msg.type) != typesAccepted.end()) {
+					auto& inbox = inboxes[msg.type];
+					inbox.msg.emplace_back(msg.msg.get());
+					inbox.elemIdx.emplace_back(i);
 				}
 			}
 		}
-		for (auto& iter : inboxes) {
-			int id = iter.first;
-			auto& inbox = iter.second;
-			onMessagesReceived(id, inbox.msg.data(), inbox.elemIdx.data(), inbox.msg.size());
-		}
+	}
+	for (auto& iter: inboxes) {
+		const int msgId = iter.first;
+		auto& inbox = iter.second;
+		onMessagesReceived(msgId, inbox.msg.data(), inbox.elemIdx.data(), inbox.msg.size(), family);
 	}
 }
 
@@ -127,9 +133,9 @@ void System::dispatchMessages()
 	}
 }
 
-size_t System::doSendSystemMessage(SystemMessageContext context, const String& targetSystem)
+size_t System::doSendSystemMessage(SystemMessageContext context, const String& targetSystem, SystemMessageDestination destination)
 {
-	return world->sendSystemMessage(std::move(context), targetSystem);
+	return world->sendSystemMessage(std::move(context), targetSystem, destination);
 }
 
 void System::receiveSystemMessage(const SystemMessageContext& context)
@@ -146,7 +152,7 @@ void System::prepareSystemMessages()
 void System::processSystemMessages()
 {
 	for (auto& message: systemMessages) {
-		onSystemMessageReceived(message->msgId, *message->msg, message->callback);
+		onSystemMessageReceived(*message);
 	}
 	systemMessages.clear();
 }
@@ -156,9 +162,21 @@ size_t System::getSystemMessagesInInbox() const
 	return systemMessageInbox.size();
 }
 
-void System::sendRawMessage(EntityId target, int msgId, gsl::span<const std::byte> data)
+void System::sendEntityMessageFromNetwork(EntityId target, int msgId, gsl::span<const std::byte> data)
 {
 	doSendMessage(target, world->deserializeMessage(msgId, data), msgId);
+}
+
+void System::sendSystemMessageFromNetwork(const String& targetSystem, int msgId, gsl::span<const std::byte> data, SystemMessageCallback callback)
+{
+	SystemMessageContext context;
+
+	context.msgId = msgId;
+	context.remote = true;
+	context.msg = world->deserializeSystemMessage(msgId, data);
+	context.callback = callback;
+	
+	doSendSystemMessage(std::move(context), targetSystem, SystemMessageDestination::Local);
 }
 
 void System::doUpdate(Time time) {

@@ -34,62 +34,80 @@ void Codegen::run(Path inDir, Path outDir)
 	throw Exception("Not supported", HalleyExceptions::Tools);
 }
 
-bool Codegen::writeFile(Path filePath, const char* data, size_t dataSize, bool stub)
+int Codegen::getHeaderVersion(gsl::span<const char> data, size_t& endOfHeader)
+{
+	const String str(data.data(), std::min(data.size(), size_t(128)));
+	const auto endLine = str.find('\n');
+	if (endLine == std::string::npos) {
+		endOfHeader = 0;
+		return 0;
+	}
+
+	endOfHeader = endLine;
+	
+	const String firstLine = str.left(endLine).trimBoth();
+	if (firstLine.startsWith("// Halley codegen version ")) {
+		return firstLine.mid(26).toInteger();
+	} else {
+		return 0;
+	}
+}
+
+bool Codegen::writeFile(const Path& filePath, gsl::span<const char> data, bool stub)
 {
 	if (FileSystem::exists(filePath)) {
 		if (stub) {
 			return false;
 		}
 
-		if (FileSystem::fileSize(filePath) == dataSize) {
-			// Size matches, check if contents are identical
-			std::ifstream in(filePath.string(), std::ofstream::in | std::ofstream::binary);
-			Vector<char> buffer(dataSize);
-			in.read(&buffer[0], dataSize);
-			in.close();
+		// Read existing file
+		std::ifstream in(filePath.string(), std::ofstream::in | std::ofstream::binary);
+		Vector<char> buffer(data.size());
+		in.read(&buffer[0], data.size());
+		in.close();
 
-			bool identical = true;
-			for (size_t i = 0; i < dataSize; i++) {
-				if (buffer[i] != data[i]) {
-					identical = false;
-					break;
-				}
-			}
+		// End of headers
+		size_t oldHeaderEnd = 0;
+		size_t newHeaderEnd = 0;
 
-			if (identical) {
-				return false;
-			}
+		// Check if existing file is more recent
+		if (getHeaderVersion(buffer, oldHeaderEnd) > currentCodegenVersion) {
+			throw Exception("Codegen is out of date, please build editor.", HalleyExceptions::Tools);
 		}
-	}
 
-	FileSystem::createParentDir(filePath);
+		// Check if contents are identical
+		getHeaderVersion(data, newHeaderEnd);
+		if (std::equal(buffer.begin() + oldHeaderEnd, buffer.end(), data.begin() + newHeaderEnd, data.end())) {
+			return false;
+		}
+	} else {
+		FileSystem::createParentDir(filePath);
+	}
 
 	// Write file
 	std::ofstream out(filePath.string(), std::ofstream::out | std::ofstream::binary);
-	out.write(data, dataSize);
+	out.write(data.data(), data.size());
 	out.close();
 
 	return true;
 }
 
-void Codegen::writeFiles(Path dir, const CodeGenResult& files, Stats& stats)
+void Codegen::writeFiles(const Path& dir, const CodeGenResult& files, Stats& stats)
 {
 	FileSystem::createDir(dir);
+	
+	constexpr const char* lineBreak = getPlatform() == GamePlatform::Windows ? "\r\n" : "\n";
 	
 	for (auto& f : files) {
 		Path filePath = dir / f.fileName;
 		std::stringstream ss;
+		ss << "// Halley codegen version " << currentCodegenVersion << lineBreak;
 		for (auto& line: f.fileContents) {
-			ss << line;
-			if constexpr (getPlatform() == GamePlatform::Windows) {
-				ss << "\r\n";
-			} else {
-				ss << "\n";
-			}
+			ss << line << lineBreak;
 		}
 		auto finalData = ss.str();
 
-		bool wrote = writeFile(filePath, &finalData[0], finalData.size(), f.stub);
+		const bool wrote = writeFile(filePath, gsl::span<const char>(&finalData[0], finalData.size()), f.stub);
 		if (wrote) {
 			stats.written++;
 		} else {
@@ -101,7 +119,7 @@ void Codegen::writeFiles(Path dir, const CodeGenResult& files, Stats& stats)
 	}
 }
 
-std::vector<Path> Codegen::generateCode(const ECSData& data, Path directory)
+Vector<Path> Codegen::generateCode(const ECSData& data, Path directory)
 {
 	auto components = data.getComponents();
 	auto systems = data.getSystems();
@@ -129,6 +147,7 @@ std::vector<Path> Codegen::generateCode(const ECSData& data, Path directory)
 		Vector<ComponentSchema> comps;
 		Vector<SystemSchema> syss;
 		Vector<MessageSchema> msgs;
+		Vector<SystemMessageSchema> sysMsgs;
 
 		for (auto& comp: components) {
 			if (comp.second.generate) {
@@ -152,10 +171,11 @@ std::vector<Path> Codegen::generateCode(const ECSData& data, Path directory)
 			if (sysMsg.second.generate) {
 				writeFiles(genDir, gen->generateSystemMessage(sysMsg.second), stats);
 			}
+			sysMsgs.push_back(sysMsg.second);
 		}
 
 		// Registry
-		writeFiles(genDir, gen->generateRegistry(comps, syss, msgs), stats);
+		writeFiles(genDir, gen->generateRegistry(comps, syss, msgs, sysMsgs), stats);
 	}
 
 	// Has changes
@@ -164,7 +184,7 @@ std::vector<Path> Codegen::generateCode(const ECSData& data, Path directory)
 		utime(cmakeLists.string().c_str(), nullptr);
 	}
 
-	std::vector<Path> out;
+	Vector<Path> out;
 	for (auto& f : stats.files) {
 		out.push_back(FileSystem::getRelative(f, directory));
 	}

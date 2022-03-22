@@ -2,11 +2,12 @@
 
 #include "system.h"
 #include "world.h"
-#include "../../../net/include/halley/net/connection/iconnection.h"
+#include "halley/net/session/network_session.h"
 #include "halley/core/api/core_api.h"
 #include "halley/core/api/halley_api.h"
 #include "halley/core/graphics/painter.h"
 #include "halley/core/resources/resources.h"
+#include "halley/net/connection/ack_unreliable_connection_stats.h"
 #include "halley/support/logger.h"
 #include "halley/support/profiler.h"
 #include "halley/time/halleytime.h"
@@ -28,6 +29,7 @@ PerformanceStatsView::PerformanceStatsView(Resources& resources, const HalleyAPI
 	fpsLabel = TextRenderer(resources.get<Font>("Ubuntu Bold"), "", 15, Colour(1, 1, 1), 1.0f, Colour(0.1f, 0.1f, 0.1f))
 		.setText("20\n\n30\n\n60").setAlignment(0.5f);
 	graphLabel = TextRenderer(resources.get<Font>("Ubuntu Bold"), "", 15, Colour(1, 1, 1), 1.0f, Colour(0.1f, 0.1f, 0.1f)).setAlignment(0.5f);
+	connLabel = TextRenderer(resources.get<Font>("Ubuntu Bold"), "", 15, Colour(1, 1, 1), 1.0f, Colour(0.1f, 0.1f, 0.1f));
 
 	for (size_t i = 0; i < 8; ++i) {
 		systemLabels.push_back(headerText.clone());
@@ -64,6 +66,8 @@ void PerformanceStatsView::paint(Painter& painter)
 			drawTimeGraph(painter, Rect4f(20, 200, 1240, 500));
 		} else if (page == 1) {
 			drawTopSystems(painter, Rect4f(20, 200, 1240, 500));
+		} else if (page == 2) {
+			drawNetworkStats(painter, Rect4f(20, 200, 1240, 500));
 		}
 	} else {
 		drawHeader(painter, true);
@@ -101,9 +105,15 @@ void PerformanceStatsView::onProfileData(std::shared_ptr<ProfilerData> data)
 	}
 }
 
-void PerformanceStatsView::setNetworkStats(IConnectionStatsListener* stats)
+void PerformanceStatsView::setNetworkStats(NetworkSession& session)
 {
-	networkStats = stats;
+	networkStats = &session.getService();
+	networkSession = &session;
+}
+
+int PerformanceStatsView::getNumPages() const
+{
+	return networkStats ? 3 : 2;
 }
 
 int PerformanceStatsView::getPage() const
@@ -432,6 +442,27 @@ Colour4f PerformanceStatsView::getEventColour(ProfilerEventType type) const
 	}
 }
 
+Colour4f PerformanceStatsView::getNetworkStatsCol(const AckUnreliableConnectionStats::PacketStats& stats) const
+{
+	if (stats.size == 8 && stats.state != AckUnreliableConnectionStats::State::Unsent) {
+		return Colour4f(0.5f, 0.5f, 0.5f);
+	}
+
+	switch (stats.state) {
+	case AckUnreliableConnectionStats::State::Sent:
+		return Colour4f(1, 1, 0, 1);
+	case AckUnreliableConnectionStats::State::Acked:
+		return Colour4f(0, 1, 0, 1);
+	case AckUnreliableConnectionStats::State::Resent:
+		return Colour4f(1, 0, 0, 1);
+	case AckUnreliableConnectionStats::State::Received:
+		return Colour4f(0, 0.2f, 1, 1);
+	case AckUnreliableConnectionStats::State::Unsent:
+	default:
+		return Colour4f(0, 0, 0, 0);
+	}
+}
+
 void PerformanceStatsView::drawTopSystems(Painter& painter, Rect4f rect)
 {
 	struct CurEventData {
@@ -451,14 +482,14 @@ void PerformanceStatsView::drawTopSystems(Painter& painter, Rect4f rect)
 
 	const auto getTimeLabel = [&] (int64_t t) { return toString((t + 500) / 1000); };
 
-	std::vector<CurEventData> curEvents;
+	Vector<CurEventData> curEvents;
 	curEvents.reserve(eventHistory.size());
 	for (const auto& [k, v]: eventHistory) {
 		curEvents.emplace_back(CurEventData{ &k, v.getType(), v.getAverage(), v.getHighest(), v.getLowest(), v.getHighestEver(), v.getLowestEver() });
 	}
 	std::sort(curEvents.begin(), curEvents.end());
 
-	std::vector<ColourStringBuilder> columns;
+	Vector<ColourStringBuilder> columns;
 	columns.resize(systemLabels.size());
 
 	columns[0].append("Name:\n");
@@ -494,6 +525,61 @@ void PerformanceStatsView::drawTopSystems(Painter& painter, Rect4f rect)
 		auto [str, cols] = columns[i].moveResults();
 		systemLabels[i].setText(str).setColourOverride(cols);
 		systemLabels[i].setPosition(rect.getTopLeft() + Vector2f(xPos[i], 0)).draw(painter);
+	}
+}
+
+void PerformanceStatsView::drawNetworkStats(Painter& painter, Rect4f rect)
+{
+	if (!networkSession) {
+		return;
+	}
+	const size_t nConnections = networkSession->getNumConnections();
+	if (nConnections == 0) {
+		return;
+	}
+
+	const float spacing = 20.0f;
+	const float boxHeight = std::min(128.0f, (rect.getHeight() - (nConnections - 1) * spacing) / nConnections);
+
+	auto box = whitebox.clone();
+
+	for (size_t i = 0; i < nConnections; ++i) {
+		const Rect4f totalArea = Rect4f(rect.getTopLeft() + Vector2f(0, i * (boxHeight + spacing)), rect.getWidth(), boxHeight);
+		const Rect4f area = totalArea.grow(0, -20, 0, 0);
+
+		connLabel
+			.setPosition(totalArea.getTopLeft())
+			.setText("Connection #" + toString(i + 1) + ": latency = " + toString(lroundl(networkSession->getLatency(i) * 1000)) + " ms.")
+			.draw(painter);
+
+		boxBg
+			.clone()
+			.setPosition(area.getTopLeft())
+			.scaleTo(area.getSize())
+			.draw(painter);
+
+		const auto& connStats = networkSession->getConnectionStats(i);
+		const auto& stats = connStats.getPacketStats();
+		const auto start = connStats.getLineStart();
+		const auto lineLen = connStats.getLineSize();
+		const size_t nLines = (stats.size() + lineLen - 1) / lineLen;
+		const float width = area.getWidth() / lineLen;
+		const float height = area.getHeight() / nLines;
+
+		for (size_t j = 0; j < stats.size(); ++j) {
+			const size_t x = j % lineLen;
+			const size_t y = j / lineLen;
+
+			const auto& stat = stats[(j + start) % stats.size()];
+			const auto eventRect = Rect4f(area.getTopLeft() + Vector2f(x * width, y * height), width, height);
+			const auto border = Vector2f(4, 4);
+			
+			box
+				.setColour(getNetworkStatsCol(stat))
+				.setPosition(eventRect.getTopLeft() + border)
+				.scaleTo(eventRect.getSize() - 2 * border)
+				.draw(painter);
+		}
 	}
 }
 

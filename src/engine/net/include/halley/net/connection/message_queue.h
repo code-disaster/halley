@@ -2,45 +2,39 @@
 
 #include "network_message.h"
 #include <memory>
-#include <vector>
+#include "halley/data_structures/vector.h"
 #include <map>
+
+#include "network_packet.h"
 
 namespace Halley
 {	
 	struct ChannelSettings
 	{
-	public:
-		ChannelSettings(bool reliable = false, bool ordered = false, bool keepLastSent = false);
+		constexpr ChannelSettings(bool reliable = false, bool ordered = false, bool keepLastSent = false)
+			: reliable(reliable)
+			, ordered(ordered)
+			, keepLastSent(keepLastSent)
+		{}
+
 		bool reliable;
 		bool ordered;
 		bool keepLastSent;
 	};
 
-	class MessageQueue
+	class MessageQueue : public NetworkMessageFactories
 	{
 	public:
 		virtual ~MessageQueue();
 		
-		template <typename T>
-		void addFactory()
-		{
-			addFactory(std::make_unique<NetworkMessageFactory<T>>());
-		}
-
 		virtual bool isConnected() const = 0;
-		virtual void enqueue(std::unique_ptr<NetworkMessage> msg, int channel) = 0;
+		virtual void enqueue(OutboundNetworkPacket packet, uint8_t channel) = 0;
 		virtual void sendAll() = 0;
-		virtual std::vector<std::unique_ptr<NetworkMessage>> receiveAll() = 0;
+		virtual Vector<InboundNetworkPacket> receivePackets() = 0;
 
-		virtual void setChannel(int channel, ChannelSettings settings);
+		void enqueue(std::unique_ptr<NetworkMessage> msg, uint8_t channel);
+		Vector<std::unique_ptr<NetworkMessage>> receiveMessages();
 
-	protected:
-		void addFactory(std::unique_ptr<NetworkMessageFactoryBase> factory);
-		int getMessageType(NetworkMessage& msg) const;
-		std::unique_ptr<NetworkMessage> deserializeMessage(gsl::span<const gsl::byte> data, unsigned short msgType, unsigned short seq);
-
-	private:
-		std::map<std::type_index, int> typeToMsgIndex;
-		std::vector<std::unique_ptr<NetworkMessageFactoryBase>> factories;
+		virtual void setChannel(uint8_t channel, ChannelSettings settings);
 	};
 }

@@ -1,5 +1,9 @@
 #include "entity/entity_network_session.h"
 
+#include <cassert>
+
+#include "halley/bytes/compression.h"
+#include "halley/entity/data_interpolator.h"
 #include "halley/entity/entity_factory.h"
 #include "halley/entity/system.h"
 #include "halley/entity/world.h"
@@ -20,7 +24,7 @@ EntityNetworkSession::EntityNetworkSession(std::shared_ptr<NetworkSession> sessi
 	this->session->addListener(this);
 	this->session->setSharedDataHandler(this);
 
-	entitySerializationOptions.type = EntitySerialization::Type::SaveData;
+	entitySerializationOptions.type = EntitySerialization::Type::Network;
 
 	deltaOptions.preserveOrder = false;
 	deltaOptions.shallow = false;
@@ -45,7 +49,7 @@ void EntityNetworkSession::setWorld(World& world, SystemMessageBridge bridge)
 	// Clear queue
 	if (!queuedPackets.empty()) {
 		for (auto& qp: queuedPackets) {
-			processMessage(qp.fromPeerId, qp.type, std::move(qp.packet));
+			processMessage(qp.fromPeerId, std::move(qp.message));
 		}
 		queuedPackets.clear();
 	}
@@ -55,10 +59,12 @@ void EntityNetworkSession::sendUpdates(Time t, Rect4i viewRect, gsl::span<const 
 {
 	// Update viewport
 	auto& data = session->getMySharedData<EntityClientSharedData>();
-	const bool first = !data.viewRect;
-	data.viewRect = viewRect;
-	if (first || data.getTimeSinceLastSend() > 0.05) {
-		data.markModified();
+	if (data.viewRect != viewRect) {
+		const bool first = !data.viewRect;
+		data.viewRect = viewRect;
+		if (first || data.getTimeSinceLastSend() > 0.05) {
+			data.markModified();
+		}
 	}
 
 	// Update entities
@@ -66,7 +72,34 @@ void EntityNetworkSession::sendUpdates(Time t, Rect4i viewRect, gsl::span<const 
 		peer.sendEntities(t, entityIds, session->getClientSharedData<EntityClientSharedData>(peer.getPeerId()));
 	}
 
+	sendMessages();
 	session->update(t);
+}
+
+void EntityNetworkSession::sendToAll(EntityNetworkMessage msg)
+{
+	outbox[-1].push_back(std::move(msg));
+}
+
+void EntityNetworkSession::sendToPeer(EntityNetworkMessage msg, NetworkSession::PeerId peerId)
+{
+	outbox[peerId].push_back(std::move(msg));
+}
+
+void EntityNetworkSession::sendMessages()
+{
+	for (const auto& [peerId, msgs]: outbox) {
+		auto data = Serializer::toBytes(msgs, byteSerializationOptions);
+		auto compressed = Compression::compressRaw(gsl::as_bytes(gsl::span<const Byte>(data)), false);
+		auto packet = OutboundNetworkPacket(std::move(compressed));
+
+		if (peerId == -1) {
+			session->sendToPeers(std::move(packet));
+		} else {
+			session->sendToPeer(std::move(packet), static_cast<NetworkSession::PeerId>(peerId));
+		}
+	}
+	outbox.clear();
 }
 
 void EntityNetworkSession::receiveUpdates()
@@ -76,51 +109,59 @@ void EntityNetworkSession::receiveUpdates()
 	while (auto result = session->receive()) {
 		const auto fromPeerId = result->first;
 		auto& packet = result->second;
-		
-		EntityNetworkHeader header;
-		packet.extractHeader(header);
 
-		if (canProcessMessage(header.type)) {
-			processMessage(fromPeerId, header.type, std::move(packet));
-		} else {
-			queuedPackets.emplace_back(QueuedPacket{ fromPeerId, header.type, std::move(packet) });
+		auto bytes = Compression::decompressRaw(packet.getBytes(), 256 * 1024);
+		auto msgs = Deserializer::fromBytes<Vector<EntityNetworkMessage>>(bytes, byteSerializationOptions);
+
+		for (auto& msg: msgs) {
+			if (canProcessMessage(msg)) {
+				processMessage(fromPeerId, std::move(msg));
+			} else {
+				queuedPackets.emplace_back(QueuedMessage{ fromPeerId, std::move(msg) });
+			}
 		}
 	}
 }
 
-bool EntityNetworkSession::canProcessMessage(EntityNetworkHeaderType type)
+bool EntityNetworkSession::canProcessMessage(const EntityNetworkMessage& msg) const
 {
-	return factory || type == EntityNetworkHeaderType::ReadyToStart;
+	return factory || !msg.needsInitialization();
 }
 
-void EntityNetworkSession::processMessage(NetworkSession::PeerId fromPeerId, EntityNetworkHeaderType type, InboundNetworkPacket packet)
+void EntityNetworkSession::processMessage(NetworkSession::PeerId fromPeerId, EntityNetworkMessage msg)
 {
-	switch (type) {
+	switch (msg.getType()) {
 	case EntityNetworkHeaderType::Create:
 	case EntityNetworkHeaderType::Destroy:
 	case EntityNetworkHeaderType::Update:
-		onReceiveEntityUpdate(fromPeerId, type, std::move(packet));
+		onReceiveEntityUpdate(fromPeerId, std::move(msg));
 		break;
 	case EntityNetworkHeaderType::ReadyToStart:
-		onReceiveReady(fromPeerId);
+		onReceiveReady(fromPeerId, msg.getMessage<EntityNetworkMessageReadyToStart>());
 		break;
-	case EntityNetworkHeaderType::MessageToEntity:
-		onReceiveMessageToEntity(fromPeerId, std::move(packet));
+	case EntityNetworkHeaderType::EntityMsg:
+		onReceiveMessageToEntity(fromPeerId, msg.getMessage<EntityNetworkMessageEntityMsg>());
 		break;
-	}		
+	case EntityNetworkHeaderType::SystemMsg:
+		onReceiveSystemMessage(fromPeerId, msg.getMessage<EntityNetworkMessageSystemMsg>());
+		break;
+	case EntityNetworkHeaderType::SystemMsgResponse:
+		onReceiveSystemMessageResponse(fromPeerId, msg.getMessage<EntityNetworkMessageSystemMsgResponse>());
+		break;
+	}
 }
 
-void EntityNetworkSession::onReceiveEntityUpdate(NetworkSession::PeerId fromPeerId, EntityNetworkHeaderType type, InboundNetworkPacket packet)
+void EntityNetworkSession::onReceiveEntityUpdate(NetworkSession::PeerId fromPeerId, EntityNetworkMessage msg)
 {
 	for (auto& peer: peers) {
 		if (peer.getPeerId() == fromPeerId) {
-			peer.receiveEntityPacket(fromPeerId, type, std::move(packet));
+			peer.receiveNetworkMessage(fromPeerId, std::move(msg));
 			return;
 		}
 	}
 }
 
-void EntityNetworkSession::onReceiveReady(NetworkSession::PeerId fromPeerId)
+void EntityNetworkSession::onReceiveReady(NetworkSession::PeerId fromPeerId, const EntityNetworkMessageReadyToStart& msg)
 {
 	Logger::logDev("onReceiveReady from " + toString(int(fromPeerId)));
 	if (fromPeerId == 0) {
@@ -128,33 +169,86 @@ void EntityNetworkSession::onReceiveReady(NetworkSession::PeerId fromPeerId)
 	}
 }
 
-void EntityNetworkSession::onReceiveMessageToEntity(NetworkSession::PeerId fromPeerId, InboundNetworkPacket packet)
+void EntityNetworkSession::onReceiveMessageToEntity(NetworkSession::PeerId fromPeerId, const EntityNetworkMessageEntityMsg& msg)
 {
 	Expects(factory);
 	Expects(messageBridge.isValid());
-	
-	EntityNetworkMessageToEntityHeader header;
-	packet.extractHeader(header);
 
 	auto& world = factory->getWorld();
 
-	const auto entity = world.findEntity(header.entityUUID);
+	const auto entity = world.findEntity(msg.entityUUID);
 	if (entity) {
-		messageBridge.sendMessageToEntity(entity->getEntityId(), header.messageType, packet.getBytes());
+		messageBridge.sendMessageToEntity(entity->getEntityId(), msg.messageType, gsl::as_bytes(gsl::span<const Byte>(msg.messageData)));
 	} else {
-		Logger::logError("Received message for entity " + toString(header.entityUUID) + ", but entity was not found.");
+		Logger::logError("Received message for entity " + toString(msg.entityUUID) + ", but entity was not found.");
 	}
 }
 
-void EntityNetworkSession::sendEntityMessage(EntityRef entity, int messageId, Bytes messageData)
+void EntityNetworkSession::sendEntityMessage(EntityRef entity, int messageType, Bytes messageData)
 {
 	const NetworkSession::PeerId toPeerId = entity.getOwnerPeerId().value();
-
-	auto packet = OutboundNetworkPacket(std::move(messageData));
-	packet.addHeader(EntityNetworkMessageToEntityHeader(entity.getInstanceUUID(), messageId));
-	packet.addHeader(EntityNetworkHeader(EntityNetworkHeaderType::MessageToEntity));
-	session->sendToPeer(packet, toPeerId);
+	sendToPeer(EntityNetworkMessageEntityMsg(entity.getInstanceUUID(), messageType, std::move(messageData)), toPeerId);
 }
+
+void EntityNetworkSession::sendSystemMessage(String targetSystem, int messageType, Bytes messageData, SystemMessageDestination destination, SystemMessageCallback callback)
+{
+	Expects(destination != SystemMessageDestination::Local);
+
+	// Only wait for responses from host
+	// In order to support responses from all players, this class needs to track which clients are in the session and probably include timeouts
+	const bool wantsResponse = destination == SystemMessageDestination::Host && callback;
+	if (!wantsResponse && callback) {
+		Logger::logError("Sending System Message " + toString(messageType) + " with a callback, but not sending it to host only, so it won't ever receive a remote response.");
+	}
+
+	// Create message
+	const auto id = systemMessageId++;
+	auto msg = EntityNetworkMessageSystemMsg(messageType, id, wantsResponse, std::move(targetSystem), destination, std::move(messageData));
+	if (wantsResponse) {
+		pendingSysMsgResponses[id] = PendingSysMsgResponse{ std::move(callback) };
+		assert(pendingSysMsgResponses.size() < 1000); // Make sure we're not leaking
+	}
+
+	// Send
+	if (destination == SystemMessageDestination::Host) {
+		assert(!isHost());
+		sendToPeer(std::move(msg), 0);
+	} else {
+		sendToAll(std::move(msg));
+	}
+}
+
+void EntityNetworkSession::onReceiveSystemMessage(NetworkSession::PeerId fromPeerId, const EntityNetworkMessageSystemMsg& msg)
+{
+	Expects(factory);
+	Expects(messageBridge.isValid());
+
+	const auto msgType = msg.messageType;
+	const auto msgId = msg.msgId;
+
+	SystemMessageCallback callback;
+	if (msg.wantsResponse) {
+		callback = [=](gsl::byte*, Bytes serializedData)
+		{
+			sendToPeer(EntityNetworkMessageSystemMsgResponse(msgType, msgId, serializedData), fromPeerId);
+		};
+	}
+	
+	messageBridge.sendMessageToSystem(msg.targetSystem, msg.messageType, gsl::as_bytes(gsl::span<const Byte>(msg.messageData)), std::move(callback));
+}
+
+void EntityNetworkSession::onReceiveSystemMessageResponse(NetworkSession::PeerId fromPeerId, const EntityNetworkMessageSystemMsgResponse& msg)
+{
+	auto iter = pendingSysMsgResponses.find(msg.msgId);
+	if (iter == pendingSysMsgResponses.end()) {
+		Logger::logWarning("Unexpected system message response received.");
+		return;
+	}
+
+	iter->second.callback(nullptr, msg.responseData);
+	pendingSysMsgResponses.erase(iter);
+}
+
 
 void EntityNetworkSession::setupDictionary()
 {
@@ -162,16 +256,6 @@ void EntityNetworkSession::setupDictionary()
 	serializationDictionary.addEntry("children");
 	serializationDictionary.addEntry("Transform2D");
 	serializationDictionary.addEntry("position");
-
-	// HACK
-	serializationDictionary.addEntry("Velocity");
-	serializationDictionary.addEntry("Character");
-	serializationDictionary.addEntry("velocity");
-	serializationDictionary.addEntry("facing");
-	serializationDictionary.addEntry("moveInput");
-	serializationDictionary.addEntry("Calendar");
-	serializationDictionary.addEntry("time");
-	serializationDictionary.addEntry("fract");
 }
 
 World& EntityNetworkSession::getWorld() const
@@ -202,6 +286,11 @@ const SerializerOptions& EntityNetworkSession::getByteSerializationOptions() con
 	return byteSerializationOptions;
 }
 
+SerializationDictionary& EntityNetworkSession::getSerializationDictionary()
+{
+	return serializationDictionary;
+}
+
 Time EntityNetworkSession::getMinSendInterval() const
 {
 	return 0.05;
@@ -221,6 +310,28 @@ void EntityNetworkSession::onPreSendDelta(EntityDataDelta& delta)
 	}
 }
 
+void EntityNetworkSession::requestSetupInterpolators(DataInterpolatorSet& interpolatorSet, EntityRef entity, bool remote)
+{
+	interpolatorSet.markReady();
+	if (listener) {
+		listener->setupInterpolators(interpolatorSet, entity, remote);
+
+		for (const auto& c: entity.getChildren()) {
+			requestSetupInterpolators(interpolatorSet, c, remote);
+		}
+	}
+}
+
+void EntityNetworkSession::setupOutboundInterpolators(EntityRef entity)
+{
+	if (listener) {
+		auto& interpolatorSet = entity.setupNetwork(session->getMyPeerId().value());
+		if (!interpolatorSet.isReady()) {
+			requestSetupInterpolators(interpolatorSet, entity, false);
+		}
+	}
+}
+
 bool EntityNetworkSession::isReadyToStart() const
 {
 	return readyToStart;
@@ -232,9 +343,9 @@ bool EntityNetworkSession::isEntityInView(EntityRef entity, const EntityClientSh
 	return listener->isEntityInView(entity, clientData);
 }
 
-std::vector<Rect4i> EntityNetworkSession::getRemoteViewPorts() const
+Vector<Rect4i> EntityNetworkSession::getRemoteViewPorts() const
 {
-	std::vector<Rect4i> result;
+	Vector<Rect4i> result;
 	for (auto& peer: peers) {
 		const auto* data = session->tryGetClientSharedData<EntityClientSharedData>(peer.getPeerId());
 		if (data && data->viewRect) {
@@ -244,10 +355,19 @@ std::vector<Rect4i> EntityNetworkSession::getRemoteViewPorts() const
 	return result;
 }
 
-bool EntityNetworkSession::isRemote(EntityRef entity) const
+bool EntityNetworkSession::isHost()
 {
-	const auto myId = session->getMyPeerId().value();
-	return entity.getOwnerPeerId().value_or(myId) != myId;
+	return session->getType() == NetworkSessionType::Host;
+}
+
+bool EntityNetworkSession::isRemote(ConstEntityRef entity) const
+{
+	const auto entityOwner = entity.getOwnerPeerId();
+	if (!entityOwner) {
+		return false;
+	}
+	
+	return entityOwner != session->getMyPeerId();
 }
 
 NetworkSession& EntityNetworkSession::getSession() const
@@ -267,6 +387,7 @@ void EntityNetworkSession::onStartSession(NetworkSession::PeerId myPeerId)
 	if (myPeerId == 0) {
 		readyToStart = true;
 	}
+	listener->onStartSession(myPeerId);
 }
 
 void EntityNetworkSession::onPeerConnected(NetworkSession::PeerId peerId)

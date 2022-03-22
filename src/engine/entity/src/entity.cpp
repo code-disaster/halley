@@ -3,6 +3,7 @@
 
 
 #include "world.h"
+#include "data_interpolator.h"
 #include "components/transform_2d_component.h"
 #include "components/network_component.h"
 
@@ -91,7 +92,7 @@ void Entity::deleteComponent(Component* component, int id, ComponentDeleterTable
 	PoolPool::getPool(deleter->getSize())->free(component);
 }
 
-void Entity::keepOnlyComponentsWithIds(const std::vector<int>& ids, World& world)
+void Entity::keepOnlyComponentsWithIds(const Vector<int>& ids, World& world)
 {
 	for (uint8_t i = 0; i < liveComponents; ++i) {
 		if (std::find(ids.begin(), ids.end(), components[i].first) == ids.end()) {
@@ -245,7 +246,7 @@ void Entity::destroy()
 	doDestroy(true);
 }
 
-void Entity::sortChildrenByInstanceUUIDs(const std::vector<UUID>& uuids)
+void Entity::sortChildrenByInstanceUUIDs(const Vector<UUID>& uuids)
 {
 	const size_t nChildren = children.size();
 
@@ -289,15 +290,22 @@ bool Entity::isEmpty() const
 	return liveComponents == 0 && children.empty();
 }
 
-void Entity::setupNetwork(EntityRef& ref, uint8_t peerId)
+bool Entity::isRemote(const World& world) const
+{
+	return world.isEntityNetworkRemote(ConstEntityRef(*this, world));
+}
+
+DataInterpolatorSet& Entity::setupNetwork(EntityRef& ref, uint8_t peerId)
 {
 	auto* networkComponent = tryGetComponent<NetworkComponent>();
 	if (networkComponent) {
 		networkComponent->ownerId = peerId;
+		return networkComponent->dataInterpolatorSet;
 	} else {
 		NetworkComponent component;
 		component.ownerId = peerId;
 		ref.addComponent(std::move(component));
+		return ref.getComponent<NetworkComponent>().dataInterpolatorSet;
 	}
 }
 

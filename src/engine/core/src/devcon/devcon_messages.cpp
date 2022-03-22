@@ -14,12 +14,6 @@ void DevCon::setupMessageQueue(MessageQueue& queue)
 	queue.addFactory<ReloadAssetsMsg>();
 }
 
-LogMsg::LogMsg(gsl::span<const gsl::byte> data)
-{
-	Deserializer s(data);
-	s >> level;
-	s >> msg;
-}
 
 LogMsg::LogMsg(LoggerLevel level, const String& msg)
 	: level(level)
@@ -30,6 +24,12 @@ void LogMsg::serialize(Serializer& s) const
 {
 	s << level;
 	s << msg;
+}
+
+void LogMsg::deserialize(Deserializer& s)
+{
+	s >> level;
+	s >> msg;
 }
 
 LoggerLevel LogMsg::getLevel() const
@@ -48,12 +48,6 @@ MessageType LogMsg::getMessageType() const
 }
 
 
-ReloadAssetsMsg::ReloadAssetsMsg(gsl::span<const gsl::byte> data)
-{
-	Deserializer s(data);
-	s >> ids;
-}
-
 ReloadAssetsMsg::ReloadAssetsMsg(gsl::span<const String> ids)
 	: ids(ids.begin(), ids.end())
 {}
@@ -63,7 +57,12 @@ void ReloadAssetsMsg::serialize(Serializer& s) const
 	s << ids;
 }
 
-std::vector<String> ReloadAssetsMsg::getIds() const
+void ReloadAssetsMsg::deserialize(Deserializer& s)
+{
+	s >> ids;
+}
+
+Vector<String> ReloadAssetsMsg::getIds() const
 {
 	return ids;
 }

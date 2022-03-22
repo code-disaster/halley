@@ -11,7 +11,7 @@
 #include "halley/core/resources/resource_reference.h"
 
 namespace Halley {
-	template <class, class = void_t<>> struct HasInPlaceDeserializer : std::false_type {};
+	template <class, class = std::void_t<>> struct HasInPlaceDeserializer : std::false_type {};
 	template <class T> struct HasInPlaceDeserializer<T, decltype(std::declval<ConfigNodeSerializer<T>>().deserialize(std::declval<const EntitySerializationContext&>(), std::declval<const ConfigNode&>(), std::declval<T&>()))> : std::true_type { };
 
 	template <typename T>
@@ -139,7 +139,7 @@ namespace Halley {
     public:
         ConfigNode serialize(Rect4i value, const EntitySerializationContext& context)
 		{
-        	std::vector<int> seq = { value.getX(), value.getY(), value.getWidth(), value.getHeight() };
+        	Vector<int> seq = { value.getX(), value.getY(), value.getWidth(), value.getHeight() };
         	return ConfigNode(seq);
 		}
 		
@@ -159,7 +159,7 @@ namespace Halley {
     public:
         ConfigNode serialize(Rect4f value, const EntitySerializationContext& context)
 		{
-        	std::vector<float> seq = { value.getX(), value.getY(), value.getWidth(), value.getHeight() };
+        	Vector<float> seq = { value.getX(), value.getY(), value.getWidth(), value.getHeight() };
         	return ConfigNode(seq);
 		}
 		
@@ -197,9 +197,9 @@ namespace Halley {
     };
 
 	template <typename T>
-    class ConfigNodeSerializer<std::vector<T>> {
+    class ConfigNodeSerializer<Vector<T>> {
     public:
-        ConfigNode serialize(const std::vector<T>& values, const EntitySerializationContext& context)
+        ConfigNode serialize(const Vector<T>& values, const EntitySerializationContext& context)
 		{
         	auto serializer = ConfigNodeSerializer<T>();
         	ConfigNode result = ConfigNode::SequenceType();
@@ -211,9 +211,9 @@ namespace Halley {
         	return result;
 		}
 		
-        std::vector<T> deserialize(const EntitySerializationContext& context, const ConfigNode& node)
+        Vector<T> deserialize(const EntitySerializationContext& context, const ConfigNode& node)
         {
-			std::vector<T> result;
+			Vector<T> result;
         	if (node.getType() == ConfigNodeType::Sequence) {
 				auto seq = node.asSequence();
 				result.reserve(seq.size());
@@ -512,10 +512,10 @@ namespace Halley {
 	template<typename L, typename R = L>
 	struct HasOperatorDifferent : Detail::HasOperatorDifferent<L, R>::type {};
 
-	template <typename T>
+	template <typename T, typename Interpolator = void>
 	class EntityConfigNodeSerializer {
 	public:
-		static void serialize(const T& value, const T& defaultValue, const EntitySerializationContext& context, ConfigNode& node, const String& name, int serializationMask)
+		static void serialize(const T& value, const T& defaultValue, const EntitySerializationContext& context, ConfigNode& node, std::string_view componentName, std::string_view name, int serializationMask)
 		{
 			if (context.matchType(serializationMask)) {
 				bool canWrite;
@@ -536,13 +536,18 @@ namespace Halley {
 			}
 		}
 
-		static void deserialize(T& value, const T& defaultValue, const EntitySerializationContext& context, const ConfigNode& node, const String& name, int serializationMask)
+		static void deserialize(T& value, const T& defaultValue, const EntitySerializationContext& context, const ConfigNode& node, std::string_view componentName, std::string_view fieldName, int serializationMask)
 		{
 			if (context.matchType(serializationMask) && node.getType() != ConfigNodeType::Noop) {
 				const bool delta = node.getType() == ConfigNodeType::DeltaMap;
-				const auto& fieldNode = node[name];
+				const auto& fieldNode = node[fieldName];
 				if (fieldNode.getType() != ConfigNodeType::Noop && (fieldNode.getType() != ConfigNodeType::Undefined || !delta)) {
-					ConfigNodeHelper<T>::deserialize(value, defaultValue, context, node[name]);
+					auto* interpolator = context.interpolators ? context.interpolators->tryGetInterpolator(context, componentName, fieldName) : nullptr;
+					if (interpolator) {
+						interpolator->deserialize(&value, &defaultValue, context, node[fieldName]);
+					} else {
+						ConfigNodeHelper<T>::deserialize(value, defaultValue, context, node[fieldName]);
+					}
 				}
 			}
 		}

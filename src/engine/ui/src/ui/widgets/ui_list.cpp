@@ -86,9 +86,9 @@ String UIList::getSelectedOptionId() const
 	return getItem(curOption)->getId();
 }
 
-std::vector<int> UIList::getSelectedOptions() const
+Vector<int> UIList::getSelectedOptions() const
 {
-	std::vector<int> result;
+	Vector<int> result;
 	for (const auto& item: items) {
 		if (item->isSelected()) {
 			result.push_back(item->getIndex());
@@ -97,9 +97,9 @@ std::vector<int> UIList::getSelectedOptions() const
 	return result;
 }
 
-std::vector<String> UIList::getSelectedOptionIds() const
+Vector<String> UIList::getSelectedOptionIds() const
 {
-	std::vector<String> result;
+	Vector<String> result;
 	for (const auto& item: items) {
 		if (item->isSelected()) {
 			result.push_back(item->getId());
@@ -334,13 +334,18 @@ std::shared_ptr<UIListItem> UIList::addItem(const String& id, std::shared_ptr<IU
 
 void UIList::clear()
 {
+	const bool hadItems = !items.empty();
+
 	items.clear();
 	curOption = -1;
 	UIWidget::clear();
-	layout();
 
-	if (scrollToSelection) {
-		sendEvent(UIEvent(UIEventType::MakeAreaVisibleCentered, getId(), Rect4f(0, 0, 1, 1)));
+	if (hadItems) {
+		layout();
+
+		if (scrollToSelection) {
+			sendEvent(UIEvent(UIEventType::MakeAreaVisibleCentered, getId(), Rect4f(0, 0, 1, 1)));
+		}
 	}
 }
 
@@ -1245,7 +1250,7 @@ bool UIList::setSelectedOptionIds(gsl::span<const String> ids, SelectionMode mod
 		*/
 		forceAddChildren(UIInputType::Undefined, false);
 
-		auto sortedIds = std::vector<String>(ids.begin(), ids.end());
+		auto sortedIds = Vector<String>(ids.begin(), ids.end());
 		std::sort(sortedIds.begin(), sortedIds.end());
 		for (auto& item: items) {
 			const bool inSet = std::binary_search(sortedIds.begin(), sortedIds.end(), item->getId());

@@ -1,7 +1,7 @@
 #pragma once
 
-#include <new>
 #include <cstddef>
+#include <typeinfo>
 
 #include "halley/support/exception.h"
 
@@ -18,17 +18,12 @@ namespace Halley
 
 		virtual void serialize(Serializer& s) const
 		{
-			throw Exception("Message type is not serializable.", HalleyExceptions::Entity);
+			throw Exception("Message " + String(typeid(*this).name()) + " is not serializable.", HalleyExceptions::Entity);
 		}
 		
 		virtual void deserialize(Deserializer& s)
 		{
-			throw Exception("Message type is not serializable.", HalleyExceptions::Entity);
+			throw Exception("Message " + String(typeid(*this).name()) + " is not serializable.", HalleyExceptions::Entity);
 		}
-		
-		/*
-		void* operator new(size_t size);
-		void operator delete(void* ptr);
-		*/
 	};
 }
