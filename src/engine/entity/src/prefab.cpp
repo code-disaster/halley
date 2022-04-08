@@ -83,7 +83,7 @@ String Prefab::toYAML() const
 {
 	waitForLoad(true);
 	YAMLConvert::EmitOptions options;
-	options.mapKeyOrder = {{ "name", "icon", "uuid", "prefab", "components", "children" }};
+	options.mapKeyOrder = {{ "name", "icon", "flags", "uuid", "prefab", "components", "children" }};
 	return YAMLConvert::generateYAML(toConfigNode(), options);
 }
 
@@ -259,6 +259,13 @@ void Prefab::preloadDependencies(Resources& resources) const
 	for (const auto& data: getEntityDatas()) {
 		doPreloadDependencies(data, resources);
 	}
+}
+
+ResourceMemoryUsage Prefab::getMemoryUsage() const
+{
+	ResourceMemoryUsage result;
+	result.ramUsage = entityData.getSizeBytes() + gameData.getSizeBytes();
+	return result;
 }
 
 void Prefab::doPreloadDependencies(const EntityData& data, Resources& resources) const
