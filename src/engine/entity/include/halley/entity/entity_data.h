@@ -91,7 +91,8 @@ namespace Halley {
         void updateComponent(const String& id, const ConfigNode& data);
         void updateChild(const EntityData& instanceChildData);
 
-    	void instantiateWith(const EntityData& instance);
+    	void instantiate(const UUID& uuid);
+		void instantiateWith(const EntityData& instance);
 	    EntityData instantiateWithAsCopy(const EntityData& instance) const;
     	
         bool isDelta() const override;
@@ -102,6 +103,8 @@ namespace Halley {
     	bool isSceneRoot() const;
 
         std::optional<size_t> getChildIndex(const UUID& uuid) const;
+
+        size_t getSizeBytes() const;
 
     private:
 

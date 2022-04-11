@@ -91,6 +91,18 @@ void ConfigFile::deserialize(Deserializer& s)
 	updateRoot();
 }
 
+size_t ConfigFile::getSizeBytes() const
+{
+	return root.getSizeBytes();
+}
+
+ResourceMemoryUsage ConfigFile::getMemoryUsage() const
+{
+	ResourceMemoryUsage result;
+	result.ramUsage = getSizeBytes();
+	return result;
+}
+
 std::unique_ptr<ConfigFile> ConfigFile::loadResource(ResourceLoader& loader)
 {
 	auto data = loader.getStatic(false);
