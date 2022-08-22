@@ -1,7 +1,6 @@
 #include "graphics/sprite/sprite_painter.h"
 #include "graphics/sprite/sprite.h"
 #include "graphics/painter.h"
-#include <gsl/gsl>
 
 #include "graphics/material/material.h"
 #include "graphics/text/text_renderer.h"
@@ -48,44 +47,67 @@ TextRenderer MaterialRecycler::clone(const TextRenderer& text)
 	return text.clone();
 }
 
+static uint16_t packTypeAndLayer(SpritePainterEntryType type, int layer)
+{
+	const int t = int(type);
+	Ensures(t >= 0 && t < 8);
+	Ensures(layer >= 0 && layer < (1 << 13));
+	return uint16_t((t << 13) | (layer & 0x1fff));
+}
+
+static Rect2D<short> packClip(std::optional<Rect4f>& clip)
+{
+	int x = 0, y = 0, w = 0, h = 0;
+
+	constexpr int clipMin = std::numeric_limits<short>::min();
+	constexpr int clipMax = std::numeric_limits<short>::max();
+
+	if (clip.has_value()) {
+		x = int(clip->getX());
+		y = int(clip->getY());
+		w = int(clip->getWidth());
+		h = int(clip->getHeight());
+		Ensures(x >= clipMin && (x + w) <= clipMax);
+		Ensures(y >= clipMin && (y + h) <= clipMax);
+	}
+
+	return { short(x), short(y), short(w), short(h) };
+}
+
 SpritePainterEntry::SpritePainterEntry(gsl::span<const Sprite> sprites, int mask, int layer, float tieBreaker, size_t insertOrder, std::optional<Rect4f> clip)
 	: ptr(sprites.empty() ? nullptr : &sprites[0])
 	, count(uint32_t(sprites.size()))
-	, type(SpritePainterEntryType::SpriteRef)
-	, layer(layer)
-	, mask(mask)
+	, typeAndLayer(packTypeAndLayer(SpritePainterEntryType::SpriteRef, layer))
 	, tieBreaker(tieBreaker)
-	, insertOrder(insertOrder)
-	, clip(clip)
+	, insertOrder(uint32_t(insertOrder))
+	, clip(packClip(clip))
+	, mask(mask)
 {}
 
 SpritePainterEntry::SpritePainterEntry(gsl::span<const TextRenderer> texts, int mask, int layer, float tieBreaker, size_t insertOrder, std::optional<Rect4f> clip)
 	: ptr(texts.empty() ? nullptr : &texts[0])
 	, count(uint32_t(texts.size()))
-	, type(SpritePainterEntryType::TextRef)
-	, layer(layer)
-	, mask(mask)
+	, typeAndLayer(packTypeAndLayer(SpritePainterEntryType::TextRef, layer))
 	, tieBreaker(tieBreaker)
-	, insertOrder(insertOrder)
-	, clip(clip)
-{
-}
+	, insertOrder(uint32_t(insertOrder))
+	, clip(packClip(clip))
+	, mask(mask)
+{}
 
 SpritePainterEntry::SpritePainterEntry(SpritePainterEntryType type, size_t spriteIdx, size_t count, int mask, int layer, float tieBreaker, size_t insertOrder, std::optional<Rect4f> clip)
-	: count(uint32_t(count))
-	, index(static_cast<int>(spriteIdx))
-	, type(type)
-	, layer(layer)
-	, mask(mask)
+	: index(static_cast<int>(spriteIdx))
+	, count(uint32_t(count))
+	, typeAndLayer(packTypeAndLayer(type, layer))
 	, tieBreaker(tieBreaker)
-	, insertOrder(insertOrder)
-	, clip(clip)
+	, insertOrder(uint32_t(insertOrder))
+	, clip(packClip(clip))
+	, mask(mask)
 {}
 
 bool SpritePainterEntry::operator<(const SpritePainterEntry& o) const
 {
-	if (layer != o.layer) {
-		return layer < o.layer;
+	if ((typeAndLayer & 0x1f) != (o.typeAndLayer & 0x1f)) {
+		return (typeAndLayer & 0x1f) < (o.typeAndLayer & 0x1f);
 	} else if (tieBreaker != o.tieBreaker) {
 		return tieBreaker < o.tieBreaker;
 	} else {
@@ -95,20 +117,20 @@ bool SpritePainterEntry::operator<(const SpritePainterEntry& o) const
 
 SpritePainterEntryType SpritePainterEntry::getType() const
 {
-	return type;
+	return (SpritePainterEntryType) (typeAndLayer >> 13);
 }
 
 gsl::span<const Sprite> SpritePainterEntry::getSprites() const
 {
 	Expects(ptr != nullptr);
-	Expects(type == SpritePainterEntryType::SpriteRef);
+	Expects(getType() == SpritePainterEntryType::SpriteRef);
 	return gsl::span<const Sprite>(static_cast<const Sprite*>(ptr), count);
 }
 
 gsl::span<const TextRenderer> SpritePainterEntry::getTexts() const
 {
 	Expects(ptr != nullptr);
-	Expects(type == SpritePainterEntryType::TextRef);
+	Expects(getType() == SpritePainterEntryType::TextRef);
 	return gsl::span<const TextRenderer>(static_cast<const TextRenderer*>(ptr), count);
 }
 
@@ -128,9 +150,13 @@ int SpritePainterEntry::getMask() const
 	return mask;
 }
 
-const std::optional<Rect4f>& SpritePainterEntry::getClip() const
+std::optional<Rect4f> SpritePainterEntry::getClip() const
 {
-	return clip;
+	const int area = clip.getWidth() * clip.getHeight();
+	if (area != 0) {
+		return Rect4f(clip.getX(), clip.getY(), clip.getWidth(), clip.getHeight());
+	}
+	return std::nullopt;
 }
 
 void SpritePainter::start(bool forceCopy)

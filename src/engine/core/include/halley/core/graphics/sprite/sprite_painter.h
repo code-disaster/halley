@@ -57,18 +57,17 @@ namespace Halley
 		uint32_t getIndex() const;
 		uint32_t getCount() const;
 		int getMask() const;
-		const std::optional<Rect4f>& getClip() const;
+		std::optional<Rect4f> getClip() const;
 
 	private:
 		const void* ptr = nullptr;
-		uint32_t count = 0;
 		uint32_t index = std::numeric_limits<uint32_t>::max();
-		SpritePainterEntryType type;
-		int layer;
-		int mask;
+		uint16_t count = 0;
+		uint16_t typeAndLayer;
 		float tieBreaker;
-		size_t insertOrder;
-		std::optional<Rect4f> clip;
+		uint32_t insertOrder;
+		Rect2D<short> clip;
+		int mask;
 	};
 
 	class SpritePainter
