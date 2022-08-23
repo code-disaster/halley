@@ -76,33 +76,39 @@ static Rect2D<short> packClip(std::optional<Rect4f>& clip)
 
 SpritePainterEntry::SpritePainterEntry(gsl::span<const Sprite> sprites, int mask, int layer, float tieBreaker, size_t insertOrder, std::optional<Rect4f> clip)
 	: ptr(sprites.empty() ? nullptr : &sprites[0])
-	, count(uint32_t(sprites.size()))
+	, count(uint16_t(sprites.size()))
 	, typeAndLayer(packTypeAndLayer(SpritePainterEntryType::SpriteRef, layer))
 	, tieBreaker(tieBreaker)
 	, insertOrder(uint32_t(insertOrder))
 	, clip(packClip(clip))
 	, mask(mask)
-{}
+{
+	Ensures(sprites.size() < std::numeric_limits<uint16_t>::max());
+}
 
 SpritePainterEntry::SpritePainterEntry(gsl::span<const TextRenderer> texts, int mask, int layer, float tieBreaker, size_t insertOrder, std::optional<Rect4f> clip)
 	: ptr(texts.empty() ? nullptr : &texts[0])
-	, count(uint32_t(texts.size()))
+	, count(uint16_t(texts.size()))
 	, typeAndLayer(packTypeAndLayer(SpritePainterEntryType::TextRef, layer))
 	, tieBreaker(tieBreaker)
 	, insertOrder(uint32_t(insertOrder))
 	, clip(packClip(clip))
 	, mask(mask)
-{}
+{
+	Ensures(texts.size() < std::numeric_limits<uint16_t>::max());
+}
 
 SpritePainterEntry::SpritePainterEntry(SpritePainterEntryType type, size_t spriteIdx, size_t count, int mask, int layer, float tieBreaker, size_t insertOrder, std::optional<Rect4f> clip)
 	: index(static_cast<int>(spriteIdx))
-	, count(uint32_t(count))
+	, count(uint16_t(count))
 	, typeAndLayer(packTypeAndLayer(type, layer))
 	, tieBreaker(tieBreaker)
 	, insertOrder(uint32_t(insertOrder))
 	, clip(packClip(clip))
 	, mask(mask)
-{}
+{
+	Ensures(count < std::numeric_limits<uint16_t>::max());
+}
 
 bool SpritePainterEntry::operator<(const SpritePainterEntry& o) const
 {
