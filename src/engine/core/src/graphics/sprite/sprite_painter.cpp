@@ -110,15 +110,52 @@ SpritePainterEntry::SpritePainterEntry(SpritePainterEntryType type, size_t sprit
 	Ensures(count < std::numeric_limits<uint16_t>::max());
 }
 
+SpritePainterEntry::SpritePainterEntry(const SpritePainterEntry& o)
+	: ptr(o.ptr)
+	, index(o.index)
+	, count(o.count)
+	, typeAndLayer(o.typeAndLayer)
+	, tieBreaker(o.tieBreaker)
+	, insertOrder(o.insertOrder)
+	, clip(o.clip)
+	, mask(o.mask)
+{}
+
+SpritePainterEntry& SpritePainterEntry::operator=(const SpritePainterEntry& o)
+{
+	ptr = o.ptr;
+	index = o.index;
+	count = o.count;
+	typeAndLayer = o.typeAndLayer;
+	tieBreaker = o.tieBreaker;
+	insertOrder = o.insertOrder;
+	clip = o.clip;
+	mask = o.mask;
+	return *this;
+}
+
+SpritePainterEntry& SpritePainterEntry::operator=(SpritePainterEntry&& o) noexcept
+{
+	ptr = o.ptr;
+	index = o.index;
+	count = o.count;
+	typeAndLayer = o.typeAndLayer;
+	tieBreaker = o.tieBreaker;
+	insertOrder = o.insertOrder;
+	clip = std::move(o.clip);
+	mask = o.mask;
+	return *this;
+}
+
 bool SpritePainterEntry::operator<(const SpritePainterEntry& o) const
 {
-	if ((typeAndLayer & 0x1f) != (o.typeAndLayer & 0x1f)) {
-		return (typeAndLayer & 0x1f) < (o.typeAndLayer & 0x1f);
-	} else if (tieBreaker != o.tieBreaker) {
-		return tieBreaker < o.tieBreaker;
-	} else {
-		return insertOrder < o.insertOrder;
+	if (typeAndLayer != o.typeAndLayer) {
+		return typeAndLayer < o.typeAndLayer;
 	}
+	if (tieBreaker != o.tieBreaker) {
+		return tieBreaker < o.tieBreaker;
+	}
+	return insertOrder < o.insertOrder;
 }
 
 SpritePainterEntryType SpritePainterEntry::getType() const
