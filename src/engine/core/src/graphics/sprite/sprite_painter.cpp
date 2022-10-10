@@ -110,43 +110,6 @@ SpritePainterEntry::SpritePainterEntry(SpritePainterEntryType type, size_t sprit
 	Ensures(count < std::numeric_limits<uint16_t>::max());
 }
 
-SpritePainterEntry::SpritePainterEntry(const SpritePainterEntry& o)
-	: ptr(o.ptr)
-	, index(o.index)
-	, count(o.count)
-	, typeAndLayer(o.typeAndLayer)
-	, tieBreaker(o.tieBreaker)
-	, insertOrder(o.insertOrder)
-	, clip(o.clip)
-	, mask(o.mask)
-{}
-
-SpritePainterEntry& SpritePainterEntry::operator=(const SpritePainterEntry& o)
-{
-	ptr = o.ptr;
-	index = o.index;
-	count = o.count;
-	typeAndLayer = o.typeAndLayer;
-	tieBreaker = o.tieBreaker;
-	insertOrder = o.insertOrder;
-	clip = o.clip;
-	mask = o.mask;
-	return *this;
-}
-
-SpritePainterEntry& SpritePainterEntry::operator=(SpritePainterEntry&& o) noexcept
-{
-	ptr = o.ptr;
-	index = o.index;
-	count = o.count;
-	typeAndLayer = o.typeAndLayer;
-	tieBreaker = o.tieBreaker;
-	insertOrder = o.insertOrder;
-	clip = std::move(o.clip);
-	mask = o.mask;
-	return *this;
-}
-
 bool SpritePainterEntry::operator<(const SpritePainterEntry& o) const
 {
 	const uint16_t l1 = typeAndLayer & 0x1fff;

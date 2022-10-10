@@ -50,11 +50,6 @@ namespace Halley
 		SpritePainterEntry(gsl::span<const TextRenderer> texts, int mask, int layer, float tieBreaker, size_t insertOrder, std::optional<Rect4f> clip);
 		SpritePainterEntry(SpritePainterEntryType type, size_t spriteIdx, size_t count, int mask, int layer, float tieBreaker, size_t insertOrder, std::optional<Rect4f> clip);
 
-		SpritePainterEntry(const SpritePainterEntry& o);
-
-		SpritePainterEntry& operator=(const SpritePainterEntry& o);
-		SpritePainterEntry& operator=(SpritePainterEntry&& o) noexcept;
-
 		bool operator<(const SpritePainterEntry& o) const;
 
 		SpritePainterEntryType getType() const;
