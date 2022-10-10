@@ -149,8 +149,10 @@ SpritePainterEntry& SpritePainterEntry::operator=(SpritePainterEntry&& o) noexce
 
 bool SpritePainterEntry::operator<(const SpritePainterEntry& o) const
 {
-	if (typeAndLayer != o.typeAndLayer) {
-		return typeAndLayer < o.typeAndLayer;
+	const uint16_t l1 = typeAndLayer & 0x1fff;
+	const uint16_t l2 = o.typeAndLayer & 0x1fff;
+	if (l1 != l2) {
+		return l1 < l2;
 	}
 	if (tieBreaker != o.tieBreaker) {
 		return tieBreaker < o.tieBreaker;
