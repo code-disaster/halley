@@ -49,63 +49,66 @@ TextRenderer MaterialRecycler::clone(const TextRenderer& text)
 
 static uint16_t packTypeAndLayer(SpritePainterEntryType type, int layer)
 {
-	const int t = int(type);
-	Ensures(t >= 0 && t < 8);
+	const uint16_t t = uint16_t(type);
+	Ensures(t < 8);
+
 	Ensures(layer >= 0 && layer < (1 << 13));
-	return uint16_t((t << 13) | (layer & 0x1fff));
+
+	const uint16_t typeAndLayer = (t << 13) | (layer & 0x1fff);
+	return typeAndLayer;
 }
 
-static Rect2D<short> packClip(std::optional<Rect4f>& clip)
+static Rect2D<short> packClip(const std::optional<Rect4f>& clip)
 {
-	int x = 0, y = 0, w = 0, h = 0;
-
-	constexpr int clipMin = std::numeric_limits<short>::min();
-	constexpr int clipMax = std::numeric_limits<short>::max();
+	Rect2D<short> result = {0, 0, 0, 0};
 
 	if (clip.has_value()) {
-		x = int(clip->getX());
-		y = int(clip->getY());
-		w = int(clip->getWidth());
-		h = int(clip->getHeight());
-		Ensures(x >= clipMin && (x + w) <= clipMax);
-		Ensures(y >= clipMin && (y + h) <= clipMax);
+		const auto& p1 = clip->getTopLeft();
+		const auto& p2 = clip->getBottomRight();
+
+		result.set(
+			Vector2D<short>(short(p1.x), short(p1.y)),
+			Vector2D<short>(short(p2.x), short(p2.y)));
+
+		constexpr int clipMin = std::numeric_limits<short>::min();
+		constexpr int clipMax = std::numeric_limits<short>::max();
+
+		Ensures(result.getLeft() >= clipMin && result.getRight() <= clipMax);
+		Ensures(result.getTop() >= clipMin && result.getBottom() <= clipMax);
 	}
 
-	return { short(x), short(y), short(w), short(h) };
+	return result;
 }
 
-SpritePainterEntry::SpritePainterEntry(gsl::span<const Sprite> sprites, int mask, int layer, float tieBreaker, size_t insertOrder, std::optional<Rect4f> clip)
+SpritePainterEntry::SpritePainterEntry(gsl::span<const Sprite> sprites, int layer, float tieBreaker, size_t insertOrder, const std::optional<Rect4f>& clip)
 	: ptr(sprites.empty() ? nullptr : &sprites[0])
 	, count(uint16_t(sprites.size()))
 	, typeAndLayer(packTypeAndLayer(SpritePainterEntryType::SpriteRef, layer))
 	, tieBreaker(tieBreaker)
 	, insertOrder(uint32_t(insertOrder))
 	, clip(packClip(clip))
-	, mask(mask)
 {
 	Ensures(sprites.size() < std::numeric_limits<uint16_t>::max());
 }
 
-SpritePainterEntry::SpritePainterEntry(gsl::span<const TextRenderer> texts, int mask, int layer, float tieBreaker, size_t insertOrder, std::optional<Rect4f> clip)
+SpritePainterEntry::SpritePainterEntry(gsl::span<const TextRenderer> texts, int layer, float tieBreaker, size_t insertOrder, const std::optional<Rect4f>& clip)
 	: ptr(texts.empty() ? nullptr : &texts[0])
 	, count(uint16_t(texts.size()))
 	, typeAndLayer(packTypeAndLayer(SpritePainterEntryType::TextRef, layer))
 	, tieBreaker(tieBreaker)
 	, insertOrder(uint32_t(insertOrder))
 	, clip(packClip(clip))
-	, mask(mask)
 {
 	Ensures(texts.size() < std::numeric_limits<uint16_t>::max());
 }
 
-SpritePainterEntry::SpritePainterEntry(SpritePainterEntryType type, size_t spriteIdx, size_t count, int mask, int layer, float tieBreaker, size_t insertOrder, std::optional<Rect4f> clip)
+SpritePainterEntry::SpritePainterEntry(SpritePainterEntryType type, size_t spriteIdx, size_t count, int layer, float tieBreaker, size_t insertOrder, const std::optional<Rect4f>& clip)
 	: index(static_cast<int>(spriteIdx))
 	, count(uint16_t(count))
 	, typeAndLayer(packTypeAndLayer(type, layer))
 	, tieBreaker(tieBreaker)
 	, insertOrder(uint32_t(insertOrder))
 	, clip(packClip(clip))
-	, mask(mask)
 {
 	Ensures(count < std::numeric_limits<uint16_t>::max());
 }
@@ -125,7 +128,8 @@ bool SpritePainterEntry::operator<(const SpritePainterEntry& o) const
 
 SpritePainterEntryType SpritePainterEntry::getType() const
 {
-	return (SpritePainterEntryType) (typeAndLayer >> 13);
+	uint16_t type = (typeAndLayer >> 13u) & 0x7;
+	return (SpritePainterEntryType) (type);
 }
 
 gsl::span<const Sprite> SpritePainterEntry::getSprites() const
@@ -153,21 +157,17 @@ uint32_t SpritePainterEntry::getCount() const
 	return count;
 }
 
-int SpritePainterEntry::getMask() const
-{
-	return mask;
-}
-
 std::optional<Rect4f> SpritePainterEntry::getClip() const
 {
-	const int area = clip.getWidth() * clip.getHeight();
-	if (area != 0) {
-		return Rect4f(clip.getX(), clip.getY(), clip.getWidth(), clip.getHeight());
+	const auto& p1 = clip.getTopLeft();
+	const auto& p2 = clip.getBottomRight();
+	if ((p2.x - p1.x) * (p2.y - p1.y) != 0) {
+		return Rect4f(Vector2f(p1.x, p1.y), Vector2f(p2.x, p2.y));
 	}
 	return std::nullopt;
 }
 
-void SpritePainter::start(bool forceCopy)
+void SpritePainterBucket::start(bool forceCopy)
 {
 	this->forceCopy = forceCopy;
 	sprites.clear();
@@ -176,43 +176,39 @@ void SpritePainter::start(bool forceCopy)
 	materialRecycler.startFrame();
 }
 
-void SpritePainter::add(const Sprite& sprite, int mask, int layer, float tieBreaker, std::optional<Rect4f> clip)
+void SpritePainterBucket::add(const Sprite& sprite, int layer, float tieBreaker, const std::optional<Rect4f>& clip)
 {
 	if (forceCopy) {
-		addCopy(sprite, mask, layer, tieBreaker, clip);
+		addCopy(sprite, layer, tieBreaker, clip);
 	} else {
-		Expects(mask >= 0);
-		sprites.push_back(SpritePainterEntry(gsl::span<const Sprite>(&sprite, 1), mask, layer, tieBreaker, sprites.size(), std::move(clip)));
+		sprites.push_back(SpritePainterEntry(gsl::span<const Sprite>(&sprite, 1), layer, tieBreaker, sprites.size(), std::move(clip)));
 		dirty = true;
 	}
 }
 
-void SpritePainter::addCopy(const Sprite& sprite, int mask, int layer, float tieBreaker, std::optional<Rect4f> clip)
+void SpritePainterBucket::addCopy(const Sprite& sprite, int layer, float tieBreaker, const std::optional<Rect4f>& clip)
 {
-	Expects(mask >= 0);
-	sprites.push_back(SpritePainterEntry(SpritePainterEntryType::SpriteCached, cachedSprites.size(), 1, mask, layer, tieBreaker, sprites.size(), std::move(clip)));
+	sprites.push_back(SpritePainterEntry(SpritePainterEntryType::SpriteCached, cachedSprites.size(), 1, layer, tieBreaker, sprites.size(), std::move(clip)));
 	cachedSprites.push_back(materialRecycler.clone(sprite));
 	dirty = true;
 }
 
-void SpritePainter::add(gsl::span<const Sprite> sprites, int mask, int layer, float tieBreaker, std::optional<Rect4f> clip)
+void SpritePainterBucket::add(gsl::span<const Sprite> sprites, int layer, float tieBreaker, const std::optional<Rect4f>& clip)
 {
 	if (!sprites.empty()) {
 		if (forceCopy) {
-			addCopy(sprites, mask, layer, tieBreaker, clip);
+			addCopy(sprites, layer, tieBreaker, clip);
 		} else {
-			Expects(mask >= 0);
-			this->sprites.push_back(SpritePainterEntry(sprites, mask, layer, tieBreaker, this->sprites.size(), std::move(clip)));
+			this->sprites.push_back(SpritePainterEntry(sprites, layer, tieBreaker, this->sprites.size(), std::move(clip)));
 			dirty = true;
 		}
 	}
 }
 
-void SpritePainter::addCopy(gsl::span<const Sprite> sprites, int mask, int layer, float tieBreaker, std::optional<Rect4f> clip)
+void SpritePainterBucket::addCopy(gsl::span<const Sprite> sprites, int layer, float tieBreaker, const std::optional<Rect4f>& clip)
 {
-	Expects(mask >= 0);
 	if (!sprites.empty()) {
-		this->sprites.push_back(SpritePainterEntry(SpritePainterEntryType::SpriteCached, cachedSprites.size(), sprites.size(), mask, layer, tieBreaker, this->sprites.size(), std::move(clip)));
+		this->sprites.push_back(SpritePainterEntry(SpritePainterEntryType::SpriteCached, cachedSprites.size(), sprites.size(), layer, tieBreaker, this->sprites.size(), std::move(clip)));
 		cachedSprites.reserve(cachedSprites.size() + sprites.size());
 		for (auto& s: sprites) {
 			cachedSprites.push_back(materialRecycler.clone(s));
@@ -221,70 +217,60 @@ void SpritePainter::addCopy(gsl::span<const Sprite> sprites, int mask, int layer
 	}
 }
 
-void SpritePainter::add(const TextRenderer& text, int mask, int layer, float tieBreaker, std::optional<Rect4f> clip)
+void SpritePainterBucket::add(const TextRenderer& text, int layer, float tieBreaker, const std::optional<Rect4f>& clip)
 {
 	if (forceCopy) {
-		addCopy(text, mask, layer, tieBreaker, clip);
+		addCopy(text, layer, tieBreaker, clip);
 	} else {
-		Expects(mask >= 0);
-		sprites.push_back(SpritePainterEntry(gsl::span<const TextRenderer>(&text, 1), mask, layer, tieBreaker, sprites.size(), std::move(clip)));
+		sprites.push_back(SpritePainterEntry(gsl::span<const TextRenderer>(&text, 1), layer, tieBreaker, sprites.size(), std::move(clip)));
 		dirty = true;
 	}
 }
 
-void SpritePainter::addCopy(const TextRenderer& text, int mask, int layer, float tieBreaker, std::optional<Rect4f> clip)
+void SpritePainterBucket::addCopy(const TextRenderer& text, int layer, float tieBreaker, const std::optional<Rect4f>& clip)
 {
-	Expects(mask >= 0);
-	sprites.push_back(SpritePainterEntry(SpritePainterEntryType::TextCached, cachedText.size(), 1, mask, layer, tieBreaker, sprites.size(), std::move(clip)));
+	sprites.push_back(SpritePainterEntry(SpritePainterEntryType::TextCached, cachedText.size(), 1, layer, tieBreaker, sprites.size(), std::move(clip)));
 	cachedText.push_back(materialRecycler.clone(text));
 	dirty = true;
 }
 
-void SpritePainter::add(SpritePainterEntry::Callback callback, int mask, int layer, float tieBreaker, std::optional<Rect4f> clip)
+void SpritePainterBucket::add(SpritePainterEntry::Callback callback, int layer, float tieBreaker, const std::optional<Rect4f>& clip)
 {
-	Expects(mask >= 0);
-	sprites.push_back(SpritePainterEntry(SpritePainterEntryType::Callback, callbacks.size(), 1, mask, layer, tieBreaker, sprites.size(), std::move(clip)));
+	sprites.push_back(SpritePainterEntry(SpritePainterEntryType::Callback, callbacks.size(), 1, layer, tieBreaker, sprites.size(), std::move(clip)));
 	callbacks.push_back(std::move(callback));
 	dirty = true;
 }
 
-void SpritePainter::draw(int mask, Painter& painter)
+void SpritePainterBucket::draw(Painter& painter)
 {
 	if (dirty) {
-		// TODO: implement hierarchical bucketing.
-		// - one bucket per layer
-		// - for each layer, one bucket per vertical band of the screen (32px or so)
-		// - sort each leaf bucket
-		std::sort(sprites.begin(), sprites.end()); // lol
+		std::sort(sprites.begin(), sprites.end());
 		dirty = false;
 	}
 
 	// View
 	const auto& cam = painter.getCurrentCamera();
-	Rect4f view = cam.getClippingRectangle();
+	const Rect4f view = cam.getClippingRectangle();
 
 	// Draw!
 	for (auto& s : sprites) {
-		if ((s.getMask() & mask) != 0) {
-			const auto type = s.getType();
-			
-			if (type == SpritePainterEntryType::SpriteRef) {
-				draw(s.getSprites(), painter, view, s.getClip());
-			} else if (type == SpritePainterEntryType::SpriteCached) {
-				draw(gsl::span<const Sprite>(cachedSprites.data() + s.getIndex(), s.getCount()), painter, view, s.getClip());
-			} else if (type == SpritePainterEntryType::TextRef) {
-				draw(s.getTexts(), painter, view, s.getClip());
-			} else if (type == SpritePainterEntryType::TextCached) {
-				draw(gsl::span<const TextRenderer>(cachedText.data() + s.getIndex(), s.getCount()), painter, view, s.getClip());
-			} else if (type == SpritePainterEntryType::Callback) {
-				draw(callbacks.at(s.getIndex()), painter, s.getClip());
-			}
+		const auto type = s.getType();
+		if (type == SpritePainterEntryType::SpriteRef) {
+			draw(s.getSprites(), painter, view, s.getClip());
+		} else if (type == SpritePainterEntryType::SpriteCached) {
+			draw(gsl::span<const Sprite>(cachedSprites.data() + s.getIndex(), s.getCount()), painter, view, s.getClip());
+		} else if (type == SpritePainterEntryType::TextRef) {
+			draw(s.getTexts(), painter, view, s.getClip());
+		} else if (type == SpritePainterEntryType::TextCached) {
+			draw(gsl::span<const TextRenderer>(cachedText.data() + s.getIndex(), s.getCount()), painter, view, s.getClip());
+		} else if (type == SpritePainterEntryType::Callback) {
+			draw(callbacks.at(s.getIndex()), painter, s.getClip());
 		}
 	}
 	painter.flush();
 }
 
-void SpritePainter::draw(gsl::span<const Sprite> sprites, Painter& painter, Rect4f view, const std::optional<Rect4f>& clip) const
+void SpritePainterBucket::draw(gsl::span<const Sprite> sprites, Painter& painter, Rect4f view, const std::optional<Rect4f>& clip) const
 {
 	for (const auto& sprite: sprites) {
 		if (sprite.isInView(view)) {
@@ -293,14 +279,14 @@ void SpritePainter::draw(gsl::span<const Sprite> sprites, Painter& painter, Rect
 	}
 }
 
-void SpritePainter::draw(gsl::span<const TextRenderer> texts, Painter& painter, Rect4f view, const std::optional<Rect4f>& clip) const
+void SpritePainterBucket::draw(gsl::span<const TextRenderer> texts, Painter& painter, Rect4f view, const std::optional<Rect4f>& clip) const
 {
 	for (const auto& text: texts) {
 		text.draw(painter, clip);
 	}
 }
 
-void SpritePainter::draw(const SpritePainterEntry::Callback& callback, Painter& painter, const std::optional<Rect4f>& clip) const
+void SpritePainterBucket::draw(const SpritePainterEntry::Callback& callback, Painter& painter, const std::optional<Rect4f>& clip) const
 {
 	if (clip) {
 		painter.setRelativeClip(clip.value());
@@ -308,5 +294,109 @@ void SpritePainter::draw(const SpritePainterEntry::Callback& callback, Painter& 
 	callback(painter);
 	if (clip) {
 		painter.setClip();
+	}
+}
+
+void SpritePainter::start(bool forceCopy)
+{
+	buckets.resize(32);
+	for (auto& b : buckets) {
+		b.start(forceCopy);
+	}
+}
+
+void SpritePainter::add(const Sprite& sprite, int mask, int layer, float tieBreaker, std::optional<Rect4f> clip)
+{
+	size_t idx = 0;
+	while (mask != 0) {
+		if ((mask & 1) != 0) {
+			buckets[idx].add(sprite, layer, tieBreaker, clip);
+		}
+		++idx;
+		mask >>= 1;
+	}
+}
+
+void SpritePainter::addCopy(const Sprite& sprite, int mask, int layer, float tieBreaker, std::optional<Rect4f> clip)
+{
+	size_t idx = 0;
+	while (mask != 0) {
+		if ((mask & 1) != 0) {
+			buckets[idx].addCopy(sprite, layer, tieBreaker, clip);
+		}
+		++idx;
+		mask >>= 1;
+	}
+}
+
+void SpritePainter::add(gsl::span<const Sprite> sprites, int mask, int layer, float tieBreaker, std::optional<Rect4f> clip)
+{
+	size_t idx = 0;
+	while (mask != 0) {
+		if ((mask & 1) != 0) {
+			buckets[idx].add(sprites, layer, tieBreaker, clip);
+		}
+		++idx;
+		mask >>= 1;
+	}
+}
+
+void SpritePainter::addCopy(gsl::span<const Sprite> sprites, int mask, int layer, float tieBreaker, std::optional<Rect4f> clip)
+{
+	size_t idx = 0;
+	while (mask != 0) {
+		if ((mask & 1) != 0) {
+			buckets[idx].addCopy(sprites, layer, tieBreaker, clip);
+		}
+		++idx;
+		mask >>= 1;
+	}
+}
+
+void SpritePainter::add(const TextRenderer& sprite, int mask, int layer, float tieBreaker, std::optional<Rect4f> clip)
+{
+	size_t idx = 0;
+	while (mask != 0) {
+		if ((mask & 1) != 0) {
+			buckets[idx].add(sprite, layer, tieBreaker, clip);
+		}
+		++idx;
+		mask >>= 1;
+	}
+}
+
+void SpritePainter::addCopy(const TextRenderer& text, int mask, int layer, float tieBreaker, std::optional<Rect4f> clip)
+{
+	size_t idx = 0;
+	while (mask != 0) {
+		if ((mask & 1) != 0) {
+			buckets[idx].addCopy(text, layer, tieBreaker, clip);
+		}
+		++idx;
+		mask >>= 1;
+	}
+}
+
+void SpritePainter::add(SpritePainterEntry::Callback callback, int mask, int layer, float tieBreaker, std::optional<Rect4f> clip)
+{
+	size_t idx = 0;
+	while (mask != 0) {
+		if ((mask & 1) != 0) {
+			buckets[idx].add(callback, layer, tieBreaker, clip);
+		}
+		++idx;
+		mask >>= 1;
+	}
+}
+
+void SpritePainter::draw(int mask, Painter& painter)
+{
+	size_t idx = 0;
+	while (mask != 0) {
+		if ((mask & 1) != 0) {
+			buckets[idx].draw(painter);
+		}
+		++idx;
+		mask >>= 1;
 	}
 }

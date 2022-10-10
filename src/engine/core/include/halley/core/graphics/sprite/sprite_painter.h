@@ -46,9 +46,9 @@ namespace Halley
 	public:
 		using Callback = std::function<void(Painter&)>;
 		
-		SpritePainterEntry(gsl::span<const Sprite> sprites, int mask, int layer, float tieBreaker, size_t insertOrder, std::optional<Rect4f> clip);
-		SpritePainterEntry(gsl::span<const TextRenderer> texts, int mask, int layer, float tieBreaker, size_t insertOrder, std::optional<Rect4f> clip);
-		SpritePainterEntry(SpritePainterEntryType type, size_t spriteIdx, size_t count, int mask, int layer, float tieBreaker, size_t insertOrder, std::optional<Rect4f> clip);
+		SpritePainterEntry(gsl::span<const Sprite> sprites, int layer, float tieBreaker, size_t insertOrder, const std::optional<Rect4f>& clip);
+		SpritePainterEntry(gsl::span<const TextRenderer> texts, int layer, float tieBreaker, size_t insertOrder, const std::optional<Rect4f>& clip);
+		SpritePainterEntry(SpritePainterEntryType type, size_t spriteIdx, size_t count, int layer, float tieBreaker, size_t insertOrder, const std::optional<Rect4f>& clip);
 
 		bool operator<(const SpritePainterEntry& o) const;
 
@@ -57,7 +57,6 @@ namespace Halley
 		gsl::span<const TextRenderer> getTexts() const;
 		uint32_t getIndex() const;
 		uint32_t getCount() const;
-		int getMask() const;
 		std::optional<Rect4f> getClip() const;
 
 	private:
@@ -68,7 +67,36 @@ namespace Halley
 		float tieBreaker;
 		uint32_t insertOrder;
 		Rect2D<short> clip;
-		int mask;
+	};
+
+	class SpritePainterBucket
+	{
+	public:
+		void start(bool forceCopy);
+		
+		void add(const Sprite& sprite, int layer, float tieBreaker, const std::optional<Rect4f>& clip);
+		void addCopy(const Sprite& sprite, int layer, float tieBreaker, const std::optional<Rect4f>& clip);
+		void add(gsl::span<const Sprite> sprites, int layer, float tieBreaker, const std::optional<Rect4f>& clip);
+		void addCopy(gsl::span<const Sprite> sprites, int layer, float tieBreaker, const std::optional<Rect4f>& clip);
+		void add(const TextRenderer& sprite, int layer, float tieBreaker, const std::optional<Rect4f>& clip);
+		void addCopy(const TextRenderer& text, int layer, float tieBreaker, const std::optional<Rect4f>& clip);
+		void add(SpritePainterEntry::Callback callback, int layer, float tieBreaker, const std::optional<Rect4f>& clip);
+		
+		void draw(Painter& painter);
+
+	private:
+		Vector<SpritePainterEntry> sprites;
+		Vector<Sprite> cachedSprites;
+		Vector<TextRenderer> cachedText;
+		Vector<SpritePainterEntry::Callback> callbacks;
+		bool dirty = false;
+		bool forceCopy = false;
+
+		MaterialRecycler materialRecycler;
+
+		void draw(gsl::span<const Sprite> sprite, Painter& painter, Rect4f view, const std::optional<Rect4f>& clip) const;
+		void draw(gsl::span<const TextRenderer> text, Painter& painter, Rect4f view, const std::optional<Rect4f>& clip) const;
+		void draw(const SpritePainterEntry::Callback& callback, Painter& painter, const std::optional<Rect4f>& clip) const;
 	};
 
 	class SpritePainter
@@ -87,17 +115,6 @@ namespace Halley
 		void draw(int mask, Painter& painter);
 
 	private:
-		Vector<SpritePainterEntry> sprites;
-		Vector<Sprite> cachedSprites;
-		Vector<TextRenderer> cachedText;
-		Vector<SpritePainterEntry::Callback> callbacks;
-		bool dirty = false;
-		bool forceCopy = false;
-
-		MaterialRecycler materialRecycler;
-
-		void draw(gsl::span<const Sprite> sprite, Painter& painter, Rect4f view, const std::optional<Rect4f>& clip) const;
-		void draw(gsl::span<const TextRenderer> text, Painter& painter, Rect4f view, const std::optional<Rect4f>& clip) const;
-		void draw(const SpritePainterEntry::Callback& callback, Painter& painter, const std::optional<Rect4f>& clip) const;
+		Vector<SpritePainterBucket> buckets;
 	};
 }
