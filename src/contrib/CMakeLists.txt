@@ -173,3 +173,7 @@ assign_source_group(${SOURCES})
 assign_source_group(${HEADERS})
 
 add_library (halley-contrib ${SOURCES} ${HEADERS})
+
+if(NOT (${CMAKE_SYSTEM_NAME} MATCHES "Windows"))
+        target_compile_definitions(halley-contrib PRIVATE Z_SOLO)
+endif()
