@@ -20,6 +20,7 @@ set(SOURCES
         "speex/resample.c"
 
         "stb_image/stb_image.c"
+        "stb_vorbis/stb_vorbis_impl.c"
 
         "tiny-aes/aes.c"
 
@@ -102,6 +103,7 @@ set(HEADERS
         "miniz/miniz.h"
 
         "stb_image/stb_image.h"
+        "stb_vorbis/stb_vorbis.h"
         
         "tiny-aes/aes.h"
         "tiny-aes/aes.hpp"
