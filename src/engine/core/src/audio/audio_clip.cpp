@@ -39,7 +39,7 @@ AudioClip& AudioClip::operator=(AudioClip&& other) noexcept
 
 void AudioClip::loadFromStatic(std::shared_ptr<ResourceDataStatic> data, Metadata metadata)
 {
-	VorbisData vorbis(data, true);
+	VorbisData vorbis(data, metadata.getInt("numSamples", 0), true);
 	if (vorbis.getSampleRate() != AudioConfig::sampleRate) {
 		throw Exception("Sound clip should be " + toString(AudioConfig::sampleRate) + " Hz.", HalleyExceptions::AudioEngine);
 	}	
@@ -62,7 +62,7 @@ void AudioClip::loadFromStatic(std::shared_ptr<ResourceDataStatic> data, Metadat
 void AudioClip::loadFromStream(std::shared_ptr<ResourceDataStream> data, Metadata metadata)
 {
 	for (size_t i = 0; i < vorbisData.size(); ++i) {
-		vorbisData[i] = std::make_unique<VorbisData>(data, i == 0);
+		vorbisData[i] = std::make_unique<VorbisData>(data, metadata.getInt("numSamples", 0), i == 0);
 	}
 
 	uint8_t nChannels = vorbisData[0]->getNumChannels();
