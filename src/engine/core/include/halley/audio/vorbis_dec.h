@@ -21,19 +21,10 @@
 
 #pragma once
 
-#include <memory>
-#include "halley/data_structures/vector.h"
-#include <gsl/gsl>
-
 #include "halley/api/audio_api.h"
+#include "halley/data_structures/vector.h"
 
-struct OggVorbis_File;
-
-#if defined(_MSC_VER) || defined(__clang__)
-using OggOffsetType = int64_t;
-#else
-using OggOffsetType = long int;
-#endif
+struct stb_vorbis;
 
 namespace Halley {
 	class ResourceData;
@@ -41,7 +32,7 @@ namespace Halley {
 
 	class VorbisData {
 	public:
-		VorbisData(std::shared_ptr<ResourceData> resource, bool open);
+		VorbisData(std::shared_ptr<ResourceData> resource, size_t numSamples, bool open);
 		~VorbisData();
 
 		size_t read(gsl::span<Vector<float>> dst);
@@ -58,20 +49,30 @@ namespace Halley {
 		size_t tell() const;
 
 		size_t getSizeBytes() const;
+		String getResourcePath() const;
 
 	private:
 		void open();
-		static size_t vorbisRead(void* ptr, size_t size, size_t nmemb, void* datasource);
-		static int vorbisSeek(void *datasource, OggOffsetType offset, int whence);
-		static int vorbisClose(void *datasource);
-		static long vorbisTell(void *datasource);
+		bool vorbisOpen();
+		bool vorbisGetNumSamples();
+		void vorbisSeek(int pos);
 
 		std::shared_ptr<ResourceData> resource;
 		std::shared_ptr<ResourceDataReader> stream;
-		OggVorbis_File* file;
-		
+
+		stb_vorbis* file;
+		size_t numSamples = 0;
+		size_t samplePos = 0;
+
+		uint8_t streamBuf[8192];
+		int streamBufUsed = 0;
+		int streamFirstFrameOffset = 0;
+
+		float** pcmData;
+		int pcmSamplesRead = 0;
+		int pcmSamplesTotal = 0;
+
 		bool streaming;
-		long long pos;
 		bool error = false;
 	};
 }

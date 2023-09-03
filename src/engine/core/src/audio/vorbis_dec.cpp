@@ -22,18 +22,10 @@
 #include "halley/utils/utils.h"
 #include "halley/audio/vorbis_dec.h"
 
-#include "libogg/include/ogg/ogg.h"
 #include "halley/support/exception.h"
 #include "halley/resources/resource_data.h"
-#include <gsl/gsl_assert>
 
-#ifdef WITH_IVORBIS
-	#include "ivorbiscodec.h"
-	#include "ivorbisfile.h"
-#else
-	#include "libvorbis/include/vorbis/codec.h"
-	#include "libvorbis/include/vorbis/vorbisfile.h"
-#endif
+#include "../../../../../contrib/stb_vorbis/stb_vorbis.h"
 
 using namespace Halley;
 
@@ -41,25 +33,23 @@ static void onVorbisError(int error)
 {
 	String str;
 	switch (error) {
-	case OV_EREAD: str = "A read from media returned an error."; break;
-	case OV_ENOTVORBIS: str = "Bitstream does not contain any Vorbis data."; break;
-	case OV_EVERSION: str = "Vorbis version mismatch."; break;
-	case OV_EBADHEADER: str = "Invalid Vorbis bitstream header."; break;
-	case OV_EFAULT: str = "Internal logic fault; indicates a bug or heap/stack corruption."; break;
-	case OV_HOLE: str = "Indicates there was an interruption in the data."; break;
-	case OV_EBADLINK: str = "Indicates that an invalid stream section was supplied to libvorbisfile, or the requested link is corrupt."; break;
-	case OV_EINVAL: str = "Indicates the initial file headers couldn't be read or are corrupt, or that the initial open call for vf failed."; break;
-	case OV_ENOSEEK: str = "Stream is not seekable."; break;
+	case VORBIS_outofmem: str = "Not enough memory."; break;
+	case VORBIS_feature_not_supported: str = "Feature not supported."; break;
+	case VORBIS_too_many_channels: str = "Too many channels."; break;
+	case VORBIS_file_open_failure: str = "File open failed."; break;
+	case VORBIS_seek_without_length: str = "Can't seek in unknown-length file."; break;
+	case VORBIS_unexpected_eof: str = "Unexpected end of file."; break;
+	case VORBIS_seek_invalid: str = "Seek past end of file."; break;
 	default: str = "Unknown error.";
 	}
 	throw Exception("Error opening Ogg Vorbis: "+str, HalleyExceptions::Resources);
 }
 
-VorbisData::VorbisData(std::shared_ptr<ResourceData> resource, bool doOpen)
+VorbisData::VorbisData(std::shared_ptr<ResourceData> resource, size_t numSamples, bool doOpen)
 	: resource(resource)
 	, file(nullptr)
+	, numSamples(numSamples)
 	, streaming(std::dynamic_pointer_cast<ResourceDataStream>(resource))
-	, pos(0)
 {
 	if (doOpen) {
 		open();
@@ -88,24 +78,16 @@ void VorbisData::open()
 		stream = std::dynamic_pointer_cast<ResourceDataStream>(resource)->getReader();
 	}
 
-	ov_callbacks callbacks;
-	callbacks.read_func = vorbisRead;
-	callbacks.close_func = vorbisClose;
-	callbacks.seek_func = vorbisSeek;
-	callbacks.tell_func = vorbisTell;
-
-	file = new OggVorbis_File();
-	int result = ov_open_callbacks(this, file, nullptr, 0, callbacks);
-	if (result != 0) {
-		onVorbisError(result);
+	if (!vorbisOpen() || !vorbisGetNumSamples()) {
+		error = true;
+		close();
 	}
 }
 
 void VorbisData::close()
 {
 	if (file) {
-		ov_clear(file);
-		delete file;
+		stb_vorbis_close(file);
 		file = nullptr;
 	}
 }
@@ -142,27 +124,76 @@ size_t VorbisData::read(AudioMultiChannelSamples dst, size_t nChannels)
 
 	Expects(nChannels == getNumChannels());
 
-	int bitstream;
-	size_t totalRead = 0;
-	size_t toReadLeft = dst[0].size();
+	int totalRead = 0;
+	int toReadLeft = int(dst[0].size());
 
-	while (toReadLeft > 0) {
-		float **pcm;
-		int nRead = ov_read_float(file, &pcm, int(toReadLeft), &bitstream);
+	// Consume any left-over sample data from the previous call.
+	if (pcmSamplesRead < pcmSamplesTotal) {
+		const int samples = std::min(pcmSamplesTotal - pcmSamplesRead, toReadLeft);
+		for (size_t i = 0; i < nChannels; ++i) {
+			memcpy(dst[i].data(), &pcmData[i][pcmSamplesRead], samples * sizeof(float));
+		}
+		totalRead = samples;
+		toReadLeft -=  samples;
+		pcmSamplesRead += samples;
+	}
 
-		if (nRead > 0) {
-			for (size_t i = 0; i < nChannels; ++i) {
-				memcpy(dst[i].data() + totalRead, pcm[i], nRead * sizeof(float));
+	if (toReadLeft > 0) {
+		Ensures(pcmSamplesRead == pcmSamplesTotal);
+	}
+
+	if (streaming) {
+		while (toReadLeft > 0) {
+			constexpr int streamBufLen = sizeof(streamBuf);
+			int nRead = int(stream->read(gsl::as_writable_bytes(gsl::span(&streamBuf[streamBufUsed], streamBufLen - streamBufUsed))));
+
+			const int numBytesConsumed = stb_vorbis_decode_frame_pushdata(file, streamBuf, streamBufUsed + nRead, nullptr, &pcmData, &pcmSamplesTotal);
+
+			int e = stb_vorbis_get_error(file);
+			if (e != VORBIS__no_error && e != VORBIS_need_more_data) {
+				int x =1;
 			}
 
-			totalRead += nRead;
-			toReadLeft -= nRead;
-		} else if (nRead == 0) {
-			break;
-		} else {
-			onVorbisError(nRead);
+			if (numBytesConsumed == 0) {
+				break;
+			} else {
+				if (pcmSamplesTotal > 0) {
+					const int samples = std::min(pcmSamplesTotal, toReadLeft);
+					for (size_t i = 0; i < nChannels; ++i) {
+						memcpy(dst[i].data() + totalRead, pcmData[i], samples * sizeof(float));
+					}
+					totalRead += samples;
+					toReadLeft -= samples;
+					pcmSamplesRead = samples;
+				} else {
+					
+				}
+				if (numBytesConsumed < streamBufUsed + nRead) {
+					memmove(streamBuf, &streamBuf[numBytesConsumed], streamBufUsed + nRead - numBytesConsumed);
+				}
+				streamBufUsed = streamBufUsed + nRead - numBytesConsumed;
+			}
+		}
+	} else {
+		while (toReadLeft > 0) {
+			pcmSamplesTotal = stb_vorbis_get_frame_float(file, nullptr, &pcmData);
+
+			if (pcmSamplesTotal == 0) {
+				break;
+			} else {
+				const int samples = std::min(pcmSamplesTotal, toReadLeft);
+				for (size_t i = 0; i < nChannels; ++i) {
+					memcpy(dst[i].data() + totalRead, pcmData[i], samples * sizeof(float));
+				}
+				totalRead += samples;
+				toReadLeft -= samples;
+				pcmSamplesRead = samples;
+			}
 		}
 	}
+
+	samplePos += totalRead;
+
 	return totalRead;
 }
 
@@ -173,7 +204,7 @@ size_t VorbisData::getNumSamples() const
 	}
 
 	Expects(file);
-	return size_t(ov_pcm_total(file, -1));
+	return numSamples;
 }
 
 int VorbisData::getSampleRate() const
@@ -183,8 +214,8 @@ int VorbisData::getSampleRate() const
 	}
 
 	Expects(file);
-	vorbis_info *info = ov_info(file, -1);
-	return info->rate;
+	const stb_vorbis_info info = stb_vorbis_get_info(file);
+	return info.sample_rate;
 }
 
 int VorbisData::getNumChannels() const
@@ -194,8 +225,8 @@ int VorbisData::getNumChannels() const
 	}
 
 	Expects(file);
-	vorbis_info *info = ov_info(file, -1);
-	return info->channels;
+	const stb_vorbis_info info = stb_vorbis_get_info(file);
+	return info.channels;
 }
 
 void VorbisData::seek(double t)
@@ -206,7 +237,7 @@ void VorbisData::seek(double t)
 	if (error) {
 		return;
 	}
-	ov_time_seek(file, t);
+	vorbisSeek(int(t * getSampleRate()));
 }
 
 void VorbisData::seek(size_t sample)
@@ -217,13 +248,13 @@ void VorbisData::seek(size_t sample)
 	if (error) {
 		return;
 	}
-	ov_pcm_seek(file, ogg_int64_t(sample));
+	vorbisSeek(int(sample));
 }
 
 size_t VorbisData::tell() const
 {
 	if (file) {
-		return ov_pcm_tell(file);
+		return samplePos;
 	} else {
 		return 0;
 	}
@@ -239,59 +270,138 @@ size_t VorbisData::getSizeBytes() const
 	}
 }
 
-size_t VorbisData::vorbisRead(void* ptr, size_t size, size_t nmemb, void* datasource)
+String VorbisData::getResourcePath() const
 {
-	VorbisData* data = static_cast<VorbisData*>(datasource);
-	
-	if (data->streaming) {
-		auto res = data->stream;
-		size_t requested = size*nmemb;
-		size_t r = res->read(as_writable_bytes(gsl::span<char>(reinterpret_cast<char*>(ptr), requested)));
-		return r;
-	} else {
-		auto res = std::dynamic_pointer_cast<ResourceDataStatic>(data->resource);
-		long long totalSize = res->getSize();
-		size_t left = size_t(totalSize - data->pos);
-		size_t requested = size*nmemb;
-		size_t toRead = std::min(requested, left);
+	return resource->getPath();
+}
 
-		const char* src = static_cast<const char*>(res->getData());
-		memcpy(ptr, src+data->pos, toRead);
-		data->pos += toRead;
-		return toRead;
+bool VorbisData::vorbisOpen()
+{
+	int e = VORBIS__no_error;
+
+	if (streaming) {
+		uint8_t dataBlock[8192];
+		constexpr int dataBlockLen = sizeof(dataBlock);
+
+		int nRead = int(stream->read(gsl::as_writable_bytes(gsl::span(dataBlock, dataBlockLen))));
+
+		file = stb_vorbis_open_pushdata(dataBlock, nRead, &streamFirstFrameOffset, &e, nullptr);
+
+		if (file != nullptr) {
+			stream->seek(streamFirstFrameOffset, SEEK_SET);
+		}
+	} else {
+		const auto res = std::dynamic_pointer_cast<ResourceDataStatic>(resource);
+
+		file = stb_vorbis_open_memory(static_cast<const uint8_t*>(res->getData()), int(res->getSize()), &e, nullptr);
+
+		if (file != nullptr) {
+			stb_vorbis_seek_start(file);
+		}
 	}
-}
 
-int VorbisData::vorbisSeek(void *datasource, OggOffsetType offset, int whence)
-{
-	VorbisData* data = static_cast<VorbisData*>(datasource);
-
-	if (data->streaming) {
-		auto res = data->stream;
-		res->seek(offset, whence);
-	} else {
-		auto res = std::dynamic_pointer_cast<ResourceDataStatic>(data->resource);
-		if (whence == SEEK_SET) data->pos = offset;
-		else if (whence == SEEK_CUR) data->pos += offset;
-		else if (whence == SEEK_END) data->pos = int64_t(res->getSize()) + offset;
+	if (e != VORBIS__no_error) {
+		onVorbisError(e);
+		return false;
 	}
-	
-	return 0;
+
+	return true;
 }
 
-int VorbisData::vorbisClose(void *)
+bool VorbisData::vorbisGetNumSamples()
 {
-	return 0;
-}
+	if (numSamples > 0) {
+		return true;
+	}
 
-long VorbisData::vorbisTell(void *datasource)
-{
-	VorbisData* data = static_cast<VorbisData*>(datasource);
+	int e = VORBIS__no_error;
 
-	if (data->streaming) {
-		auto res = data->stream;
-		return static_cast<long>(res->tell());
+	if (streaming) {
+		throw Exception("Vorbis stream length should be queried during asset import.", HalleyExceptions::Resources);
+#if 0
+		// TODO: Unnecessary This should be done by the asset importer.
+		uint8_t dataBlock[8192];
+		constexpr int dataBlockLen = sizeof(dataBlock);
+		int dataBlockUsed = 0;
+
+		stb_vorbis_flush_pushdata(file);
+
+		while ((e = stb_vorbis_get_error(file)) == VORBIS__no_error) {
+			int nRead = int(stream->read(gsl::as_writable_bytes(gsl::span(&dataBlock[dataBlockUsed], dataBlockLen - dataBlockUsed))));
+			dataBlockUsed += nRead;
+
+			float **pcm;
+			int samples;
+
+			const int numBytesConsumed = stb_vorbis_decode_frame_pushdata(file, dataBlock, dataBlockUsed, nullptr, &pcm, &samples);
+
+			if (numBytesConsumed == 0) {
+				break;
+			} else {
+				if (samples > 0) {
+					int offset = stb_vorbis_get_sample_offset(file);
+					if (offset != -1) {
+						numSamples = offset;
+					}
+				} else {
+					
+				}
+				if (numBytesConsumed < dataBlockUsed) {
+					memmove(dataBlock, &dataBlock[numBytesConsumed], dataBlockLen - numBytesConsumed);
+				}
+				dataBlockUsed -= numBytesConsumed;
+			}
+		}
+
+		stream->seek(streamFirstFrameOffset, SEEK_SET);
+		stb_vorbis_flush_pushdata(file);
+#endif
 	} else {
-		return long(data->pos);
+		// Non-streaming, simply ask the pulling API.
+		numSamples = stb_vorbis_stream_length_in_samples(file);
+	}
+
+	if (e != VORBIS__no_error) {
+		onVorbisError(e);
+		return false;
+	}
+
+	return true;
+}
+
+void VorbisData::vorbisSeek(int pos)
+{
+	Ensures(streaming);
+
+	if (samplePos > pos) {
+		stream->seek(streamFirstFrameOffset, SEEK_SET);
+		stb_vorbis_flush_pushdata(file);
+		samplePos = 0;
+		streamBufUsed = 0;
+	}
+
+	while (samplePos < pos) {
+		constexpr int streamBufLen = sizeof(streamBuf);
+		int nRead = int(stream->read(gsl::as_writable_bytes(gsl::span(&streamBuf[streamBufUsed], streamBufLen - streamBufUsed))));
+
+		const int numBytesConsumed = stb_vorbis_decode_frame_pushdata(file, streamBuf, streamBufUsed + nRead, nullptr, &pcmData, &pcmSamplesTotal);
+
+		if (numBytesConsumed == 0) {
+			break;
+		} else {
+			if (numBytesConsumed < streamBufUsed + nRead) {
+				memmove(streamBuf, &streamBuf[numBytesConsumed], streamBufUsed + nRead - numBytesConsumed);
+			}
+			streamBufUsed = streamBufUsed + nRead - numBytesConsumed;
+		}
+
+		samplePos += pcmSamplesTotal;
+	}
+
+	if (samplePos > pos) {
+		pcmSamplesRead = int(samplePos) - pos;
+		samplePos = pos;
+	} else {
+		pcmSamplesRead = 0;
 	}
 }
